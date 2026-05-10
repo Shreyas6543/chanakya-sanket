@@ -254,6 +254,53 @@ async def debug_strategies(symbol: str = "NIFTY"):
     }
 
 
+@app.post("/trigger/evaluate-signals")
+async def trigger_evaluate_signals(ticks: int = 1):
+    """
+    Manually run the signal evaluator.
+    ticks: how many 1-minute price ticks to simulate (use 30-60 to fast-forward to resolution).
+    """
+    from app.signals.lifecycle import evaluate_signal_tick
+    from app.market_data.mock import get_mock_spot_price
+    from app.db.models import Signal, SignalState
+    from sqlalchemy import select
+
+    resolved = []
+    async with AsyncSessionLocal() as session:
+        for _ in range(ticks):
+            result = await session.execute(
+                select(Signal).where(Signal.state == SignalState.OPEN)
+            )
+            open_signals = result.scalars().all()
+            if not open_signals:
+                break
+
+            for signal in open_signals:
+                current_price = get_mock_spot_price(signal.symbol)
+                new_state = await evaluate_signal_tick(signal, current_price, session)
+                if new_state:
+                    resolved.append({
+                        "signal_id": signal.id,
+                        "symbol": signal.symbol,
+                        "direction": signal.direction.value,
+                        "new_state": new_state,
+                        "exit_price": current_price,
+                    })
+
+        await session.commit()
+
+    # Send Telegram alert for each resolved signal
+    from app.alerts.telegram import send_text_alert
+    for r in resolved:
+        emoji = "TARGET HIT" if r["new_state"] == "TARGET_HIT" else "SL HIT"
+        await send_text_alert(
+            f"*{r['symbol']} Signal #{r['signal_id']} — {emoji}*\n"
+            f"Direction: {r['direction']} | Exit: {r['exit_price']:.2f}"
+        )
+
+    return {"ticks_simulated": ticks, "resolved": resolved}
+
+
 @app.post("/trigger/test-signal")
 async def trigger_test_signal():
     """Send a fake test signal to Telegram to verify the full alert pipeline."""

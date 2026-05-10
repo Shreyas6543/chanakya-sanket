@@ -89,10 +89,17 @@ def generate_mock_candles(symbol: str, n: int = 80, trending: bool = False) -> p
     return df
 
 
-def get_mock_spot_price(symbol: str) -> float:
+def get_mock_spot_price(symbol: str, bullish_bias: bool = True) -> float:
+    """
+    Simulate a single 1-minute price tick.
+    bullish_bias=True gives a slight upward drift so CALL signals resolve
+    toward target within a reasonable number of ticks during testing.
+    """
     price = MOCK_PRICES.get(symbol, 24500.0)
     vol = MOCK_VOLATILITY.get(symbol, 0.003)
-    new_price = round(price * (1 + random.gauss(0.0003, vol / 4)), 2)
+    # Drift: ~0.05% upward per tick ≈ realistic 1-min move on a trending day
+    drift = 0.0005 if bullish_bias else 0.0
+    new_price = round(price * (1 + random.gauss(drift, vol / 3)), 2)
     MOCK_PRICES[symbol] = new_price
     return new_price
 

@@ -182,20 +182,32 @@ def create_scheduler() -> AsyncIOScheduler:
         coalesce=True,
     )
 
-    # Open signal evaluator — every minute during market hours
-    scheduler.add_job(
-        evaluate_open_signals,
-        CronTrigger(
-            day_of_week="mon-fri",
-            hour="9-15",
-            minute="*",
-            timezone="Asia/Kolkata",
-        ),
-        id="signal_evaluator",
-        name="Signal Evaluator",
-        max_instances=1,
-        coalesce=True,
-    )
+    # Open signal evaluator — every minute.
+    # In mock mode: runs unconditionally (no live market needed).
+    # In live mode: restricted to market hours only.
+    if USE_MOCK:
+        scheduler.add_job(
+            evaluate_open_signals,
+            IntervalTrigger(minutes=1),
+            id="signal_evaluator",
+            name="Signal Evaluator (mock)",
+            max_instances=1,
+            coalesce=True,
+        )
+    else:
+        scheduler.add_job(
+            evaluate_open_signals,
+            CronTrigger(
+                day_of_week="mon-fri",
+                hour="9-15",
+                minute="*",
+                timezone="Asia/Kolkata",
+            ),
+            id="signal_evaluator",
+            name="Signal Evaluator",
+            max_instances=1,
+            coalesce=True,
+        )
 
     # News fetch — every 15 minutes
     scheduler.add_job(
