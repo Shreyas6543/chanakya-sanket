@@ -3,7 +3,7 @@ import pandas as pd
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.db.models import Signal, SignalDirection, MarketRegime
+from app.db.models import Signal, SignalDirection, MarketRegime, StrategyResult
 from app.strategies.vwap_breakout import VWAPBreakoutStrategy
 from app.strategies.rsi_momentum import RSIMomentumStrategy
 from app.strategies.bullish_engulfing import BullishEngulfingStrategy
@@ -124,6 +124,16 @@ async def generate_signal(
     )
     session.add(signal)
     await session.flush()
+
+    # Record which strategies fired so by_reason analytics works
+    for result in strategy_results:
+        if result.fired:
+            session.add(StrategyResult(
+                signal_id=signal.id,
+                strategy_name=result.reason,
+                contributed_points=result.points,
+                fired=True,
+            ))
 
     logger.info(
         "Signal generated",
