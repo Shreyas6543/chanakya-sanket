@@ -1,6 +1,6 @@
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, case
 from app.db.models import Signal, SignalOutcome, StrategyResult, SignalState
 
 logger = structlog.get_logger()
@@ -12,7 +12,7 @@ async def get_overall_stats(session: AsyncSession) -> dict:
         select(
             func.count(SignalOutcome.id).label("total"),
             func.sum(
-                func.cast(SignalOutcome.result == "TARGET_HIT", int)
+                case((SignalOutcome.result == "TARGET_HIT", 1), else_=0)
             ).label("wins"),
             func.sum(SignalOutcome.pnl).label("total_pnl"),
         )
