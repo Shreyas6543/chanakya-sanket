@@ -28,7 +28,18 @@ async def lifespan(app: FastAPI):
     logger.info("Database tables ready")
 
     if settings.upstox_access_token:
-        logger.info("Live mode — starting Upstox WebSocket feed")
+        logger.info("Live mode — seeding candles from Upstox history")
+        from app.market_data.historical import fetch_historical_candles
+        from app.market_data.candle_processor import seed_candles
+        from app.utils.market_hours import now_ist
+        today = now_ist().date()
+        for symbol in ["NIFTY", "BANKNIFTY"]:
+            df = await fetch_historical_candles(symbol, today)
+            if not df.empty:
+                seed_candles(symbol, df)
+            else:
+                logger.warning("No historical candles for today — buffer empty", symbol=symbol)
+        logger.info("Starting Upstox WebSocket feed")
         asyncio.create_task(ws_client.connect())
     else:
         logger.info("Mock mode — seeding candle data")

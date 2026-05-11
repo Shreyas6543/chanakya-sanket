@@ -62,3 +62,27 @@ def clear_candles(symbol: str):
     """Clear candle buffer — called at EOD."""
     _candle_buffer[symbol].clear()
     _current_candle.pop(symbol, None)
+
+
+def seed_candles(symbol: str, df: pd.DataFrame):
+    """
+    Pre-load historical 5m candles into the buffer on startup.
+    Called in live mode so strategies have 50+ candles immediately at 9:15 AM
+    instead of waiting ~4 hours for the buffer to fill from live ticks.
+    """
+    if df.empty:
+        return
+    _candle_buffer[symbol].clear()
+    for row in df.itertuples(index=False):
+        ts = row.timestamp
+        if hasattr(ts, "to_pydatetime"):
+            ts = ts.to_pydatetime()
+        _candle_buffer[symbol].append({
+            "timestamp": ts,
+            "open":      float(row.open),
+            "high":      float(row.high),
+            "low":       float(row.low),
+            "close":     float(row.close),
+            "volume":    float(row.volume),
+        })
+    logger.info("Candle buffer seeded", symbol=symbol, candles=len(_candle_buffer[symbol]))
