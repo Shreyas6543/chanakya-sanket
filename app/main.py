@@ -1,3 +1,4 @@
+import asyncio
 import structlog
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
@@ -8,6 +9,7 @@ from app.db.database import create_tables, AsyncSessionLocal
 from app.db import models  # noqa: F401 — must import so SQLAlchemy registers all tables
 from app.auth.upstox import get_login_url, exchange_code_for_token, save_token_to_env
 from app.scheduler import create_scheduler, run_signal_engine, fetch_news_job
+from app.market_data.websocket_client import ws_client
 from app.market_data.mock import generate_mock_candles
 from app.analytics.engine import get_overall_stats, get_reason_accuracy, get_regime_performance
 from app.db.models import Signal, SignalState
@@ -24,8 +26,10 @@ async def lifespan(app: FastAPI):
     await create_tables()
     logger.info("Database tables ready")
 
-    # Seed mock candles on startup if no live data
-    if not settings.upstox_access_token:
+    if settings.upstox_access_token:
+        logger.info("Live mode — starting Upstox WebSocket feed")
+        asyncio.create_task(ws_client.connect())
+    else:
         logger.info("Mock mode — seeding candle data")
         for symbol in ["NIFTY", "BANKNIFTY"]:
             generate_mock_candles(symbol, n=80)
@@ -34,6 +38,7 @@ async def lifespan(app: FastAPI):
     logger.info("Scheduler started")
     yield
     scheduler.shutdown()
+    await ws_client.disconnect()
     logger.info("Shutting down Chanakya Sanket")
 
 
@@ -76,11 +81,13 @@ async def upstox_callback(code: str):
     try:
         token = await exchange_code_for_token(code)
         save_token_to_env(token)
+        asyncio.create_task(ws_client.connect())
         return HTMLResponse("""
             <html><body style="font-family:sans-serif;padding:40px;background:#0f0f0f;color:white;">
             <h2>Chanakya Sanket</h2>
             <p style="color:#4ade80;font-size:18px;">Connected to Upstox successfully.</p>
-            <p>You can close this tab. Signal engine is now running on live data.</p>
+            <p>WebSocket feed starting. Signal engine is now switching to live data.</p>
+            <p style="color:#aaa;font-size:14px;">Restart the server tomorrow morning to ensure clean startup in live mode.</p>
             </body></html>
         """)
     except Exception as e:

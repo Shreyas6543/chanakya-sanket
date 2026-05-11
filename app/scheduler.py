@@ -51,11 +51,15 @@ async def run_signal_engine():
                     spot_price = get_mock_spot_price(symbol)
                     oi_data = get_mock_oi_data(symbol)
                 else:
+                    from app.market_data.websocket_client import get_live_price
                     from app.market_data.options_chain import fetch_options_chain
                     from app.signals.strike_selector import select_expiry
+                    spot_price = get_live_price(symbol)
+                    if not spot_price:
+                        logger.warning("No live price yet — WebSocket not ready", symbol=symbol)
+                        continue
                     expiry = select_expiry(symbol)
                     oi_data = await fetch_options_chain(symbol, expiry)
-                    spot_price = get_mock_spot_price(symbol)  # TODO: replace with live price
 
                 candles = get_candles(symbol, limit=100)
                 if len(candles) < 20:
@@ -98,7 +102,13 @@ async def evaluate_open_signals():
 
         for signal in open_signals:
             symbol = signal.symbol
-            current_price = get_mock_spot_price(symbol) if USE_MOCK else get_mock_spot_price(symbol)
+            if USE_MOCK:
+                current_price = get_mock_spot_price(symbol)
+            else:
+                from app.market_data.websocket_client import get_live_price
+                current_price = get_live_price(symbol)
+                if not current_price:
+                    continue
 
             from app.signals.lifecycle import evaluate_signal_tick
             new_state = await evaluate_signal_tick(signal, current_price, session)

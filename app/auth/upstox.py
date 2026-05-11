@@ -52,4 +52,7 @@ def save_token_to_env(token: str):
             else:
                 f.write(line)
 
+    # Invalidate the settings cache so subsequent reads pick up the new token
+    from app.config import get_settings
+    get_settings.cache_clear()
     logger.info("Access token saved to .env")
