@@ -1,7 +1,7 @@
 import pandas as pd
 from app.strategies.base import BaseStrategy, StrategySignal
-from app.indicators.rsi import calculate_rsi, rsi_crossed_above
-from app.indicators.ema import ema_bullish_alignment
+from app.indicators.rsi import calculate_rsi, rsi_crossed_above, rsi_crossed_below
+from app.indicators.ema import ema_bullish_alignment, ema_bearish_alignment
 from app.config import get_settings
 
 settings = get_settings()
@@ -30,4 +30,16 @@ class RSIMomentumStrategy(BaseStrategy):
                 reason=self.name,
                 details={"rsi": round(float(rsi.iloc[-1]), 2)},
             )
+
+        crossed_below = rsi_crossed_below(rsi, level=settings.rsi_crossover_level - 10)
+        ema_bearish = ema_bearish_alignment(candles["close"])
+        if crossed_below and ema_bearish:
+            return StrategySignal(
+                fired=True,
+                direction="PUT",
+                points=self.max_points,
+                reason=self.name,
+                details={"rsi": round(float(rsi.iloc[-1]), 2)},
+            )
+
         return StrategySignal(fired=False, direction=None, points=0, reason=self.name)

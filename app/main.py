@@ -455,8 +455,9 @@ async def trigger_simulate(date: str = None, count: int = 10):
                 # When price is above VWAP → bullish OI; below VWAP → bearish OI.
                 from app.indicators.vwap import calculate_vwap as _calc_vwap
                 _vwap_val = float(_calc_vwap(window).iloc[-1])
-                _bullish = spot_price >= _vwap_val
-                oi_data = get_mock_oi_data(symbol, bullish=_bullish)
+                _bullish = spot_price > _vwap_val
+                _bearish = spot_price < _vwap_val
+                oi_data = get_mock_oi_data(symbol, bullish=_bullish, bearish=_bearish)
                 sentiment = get_symbol_sentiment(symbol, _latest_news)
                 expiry = select_expiry(symbol, reference_date=sim_date)
 
@@ -474,14 +475,54 @@ async def trigger_simulate(date: str = None, count: int = 10):
                 if signal:
                     await session.commit()
                     await send_signal_alert(signal)
+
+                    # Evaluate signal against the remaining candles of the day
+                    outcome_state = "EXPIRED"
+                    outcome_price = None
+                    outcome_candle = None
+                    for future_candle in candles_full.iloc[window_end:].itertuples():
+                        close = float(future_candle.close)
+                        if signal.direction.value == "CALL":
+                            if close >= signal.target:
+                                outcome_state = "TARGET_HIT"
+                                outcome_price = close
+                                outcome_candle = str(future_candle.timestamp)
+                                break
+                            elif close <= signal.stop_loss:
+                                outcome_state = "SL_HIT"
+                                outcome_price = close
+                                outcome_candle = str(future_candle.timestamp)
+                                break
+                        else:  # PUT
+                            if close <= signal.target:
+                                outcome_state = "TARGET_HIT"
+                                outcome_price = close
+                                outcome_candle = str(future_candle.timestamp)
+                                break
+                            elif close >= signal.stop_loss:
+                                outcome_state = "SL_HIT"
+                                outcome_price = close
+                                outcome_candle = str(future_candle.timestamp)
+                                break
+
+                    from app.signals.lifecycle import _close_signal
+                    from app.db.models import SignalState
+                    await _close_signal(signal, SignalState(outcome_state), outcome_price, session)
+                    await session.commit()
+
                     results.append({
                         "symbol": signal.symbol,
                         "direction": signal.direction.value,
                         "confidence": signal.confidence,
                         "entry": signal.entry,
                         "strike": signal.strike,
+                        "sl": signal.stop_loss,
+                        "target": signal.target,
                         "signal_id": signal.id,
-                        "candle_time": str(window["timestamp"].iloc[-1]),
+                        "signal_time": str(window["timestamp"].iloc[-1]),
+                        "outcome": outcome_state,
+                        "outcome_price": outcome_price,
+                        "outcome_time": outcome_candle,
                     })
 
     return {

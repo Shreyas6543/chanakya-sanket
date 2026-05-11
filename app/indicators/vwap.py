@@ -32,3 +32,15 @@ def vwap_breakout(candles: pd.DataFrame) -> bool:
     prev_vwap = float(vwap.iloc[-2])
     curr_vwap = float(vwap.iloc[-1])
     return prev_close <= prev_vwap and curr_close > curr_vwap
+
+
+def vwap_breakdown(candles: pd.DataFrame) -> bool:
+    """Price crossed below VWAP on the last candle — mirror of vwap_breakout for PUT signals."""
+    if len(candles) < 2:
+        return False
+    vwap = calculate_vwap(candles)
+    prev_close = float(candles["close"].iloc[-2])
+    curr_close = float(candles["close"].iloc[-1])
+    prev_vwap = float(vwap.iloc[-2])
+    curr_vwap = float(vwap.iloc[-1])
+    return prev_close >= prev_vwap and curr_close < curr_vwap

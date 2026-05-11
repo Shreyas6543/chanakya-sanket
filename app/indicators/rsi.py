@@ -28,5 +28,19 @@ def rsi_crossed_above(rsi: pd.Series, level: float = 55, lookback: int = 5) -> b
     return False
 
 
+def rsi_crossed_below(rsi: pd.Series, level: float = 45, lookback: int = 5) -> bool:
+    """
+    True if RSI crossed below `level` within the last `lookback` candles.
+    Mirror of rsi_crossed_above — used for PUT/bearish signals.
+    """
+    if len(rsi) < 2:
+        return False
+    window = rsi.iloc[-(lookback + 1):]
+    for i in range(len(window) - 1):
+        if float(window.iloc[i]) > level >= float(window.iloc[i + 1]):
+            return True
+    return False
+
+
 def rsi_is_oversold(rsi: pd.Series, level: float = 35) -> bool:
     return len(rsi) > 0 and float(rsi.iloc[-1]) < level

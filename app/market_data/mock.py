@@ -104,8 +104,13 @@ def get_mock_spot_price(symbol: str, bullish_bias: bool = True) -> float:
     return new_price
 
 
-def get_mock_oi_data(symbol: str, bullish: bool = False) -> dict:
-    """Generate OI data. bullish=True produces clear call buildup + put unwind."""
+def get_mock_oi_data(symbol: str, bullish: bool = False, bearish: bool = False) -> dict:
+    """
+    Generate OI data aligned with market direction.
+    bullish=True: call buildup + put unwind → CALL signal
+    bearish=True: put buildup + call unwind → PUT signal
+    Neither: neutral random OI (no clear signal)
+    """
     base_call_oi = 5_000_000 if symbol == "NIFTY" else 3_000_000
     base_put_oi = 4_500_000 if symbol == "NIFTY" else 2_800_000
 
@@ -113,6 +118,14 @@ def get_mock_oi_data(symbol: str, bullish: bool = False) -> dict:
         return {
             "call_oi": base_call_oi * random.uniform(1.07, 1.15),  # 7-15% buildup
             "put_oi": base_put_oi * random.uniform(0.83, 0.93),    # 7-17% unwind
+            "prev_call_oi": base_call_oi,
+            "prev_put_oi": base_put_oi,
+        }
+
+    if bearish:
+        return {
+            "call_oi": base_call_oi * random.uniform(0.83, 0.93),  # 7-17% unwind
+            "put_oi": base_put_oi * random.uniform(1.07, 1.15),    # 7-15% buildup
             "prev_call_oi": base_call_oi,
             "prev_put_oi": base_put_oi,
         }

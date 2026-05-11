@@ -1,6 +1,6 @@
 import pandas as pd
 from app.strategies.base import BaseStrategy, StrategySignal
-from app.indicators.vwap import vwap_breakout
+from app.indicators.vwap import vwap_breakout, vwap_breakdown
 from app.indicators.volume import volume_spike
 from app.config import get_settings
 
@@ -28,6 +28,17 @@ class VWAPBreakoutStrategy(BaseStrategy):
                 direction="CALL",
                 points=self.max_points,
                 reason=self.name,
-                details={"vol_spike": True},
+                details={"vol_spike": vol_spike},
             )
+
+        breakdown = vwap_breakdown(candles)
+        if breakdown and vol_spike:
+            return StrategySignal(
+                fired=True,
+                direction="PUT",
+                points=self.max_points,
+                reason=self.name,
+                details={"vol_spike": vol_spike},
+            )
+
         return StrategySignal(fired=False, direction=None, points=0, reason=self.name)
