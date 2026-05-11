@@ -7,8 +7,11 @@ def calculate_vwap(candles: pd.DataFrame) -> pd.Series:
     Expects columns: high, low, close, volume, timestamp
     """
     typical_price = (candles["high"] + candles["low"] + candles["close"]) / 3
-    cumulative_tp_vol = (typical_price * candles["volume"]).cumsum()
     cumulative_vol = candles["volume"].cumsum()
+    # Index instruments (NSE_INDEX) have no volume — fall back to simple TP average
+    if float(cumulative_vol.iloc[-1]) == 0:
+        return typical_price.expanding().mean()
+    cumulative_tp_vol = (typical_price * candles["volume"]).cumsum()
     return cumulative_tp_vol / cumulative_vol
 
 

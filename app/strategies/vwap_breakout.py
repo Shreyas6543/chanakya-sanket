@@ -19,7 +19,8 @@ class VWAPBreakoutStrategy(BaseStrategy):
             return StrategySignal(fired=False, direction=None, points=0, reason=self.name)
 
         breakout = vwap_breakout(candles)
-        vol_spike = volume_spike(candles, multiplier=settings.volume_spike_multiplier)
+        has_volume = float(candles["volume"].sum()) > 0
+        vol_spike = volume_spike(candles, multiplier=settings.volume_spike_multiplier) if has_volume else True
 
         if breakout and vol_spike:
             return StrategySignal(

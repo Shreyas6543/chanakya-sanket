@@ -30,7 +30,9 @@ class OpeningRangeBreakoutStrategy(BaseStrategy):
         if not (bullish_breakout or bearish_breakout):
             return StrategySignal(fired=False, direction=None, points=0, reason=self.name)
 
-        if not volume_spike(candles, multiplier=settings.volume_spike_multiplier):
+        has_volume = float(candles["volume"].sum()) > 0
+        vol_spike = volume_spike(candles, multiplier=settings.volume_spike_multiplier) if has_volume else True
+        if not vol_spike:
             return StrategySignal(fired=False, direction=None, points=0, reason=self.name)
 
         direction = "CALL" if bullish_breakout else "PUT"

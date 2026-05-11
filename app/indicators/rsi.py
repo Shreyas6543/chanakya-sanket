@@ -13,11 +13,19 @@ def calculate_rsi(close: pd.Series, period: int = 14) -> pd.Series:
     return 100 - (100 / (1 + rs))
 
 
-def rsi_crossed_above(rsi: pd.Series, level: float = 55) -> bool:
-    """True if RSI crossed above `level` on the last closed candle."""
+def rsi_crossed_above(rsi: pd.Series, level: float = 55, lookback: int = 5) -> bool:
+    """
+    True if RSI crossed above `level` within the last `lookback` candles.
+    Lookback of 5 (25 minutes) allows strategies to align with other signals
+    that fire after the RSI crossover happens.
+    """
     if len(rsi) < 2:
         return False
-    return float(rsi.iloc[-2]) < level <= float(rsi.iloc[-1])
+    window = rsi.iloc[-(lookback + 1):]
+    for i in range(len(window) - 1):
+        if float(window.iloc[i]) < level <= float(window.iloc[i + 1]):
+            return True
+    return False
 
 
 def rsi_is_oversold(rsi: pd.Series, level: float = 35) -> bool:

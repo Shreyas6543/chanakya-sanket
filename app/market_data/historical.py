@@ -35,7 +35,14 @@ async def fetch_historical_candles(symbol: str, trading_date: date) -> pd.DataFr
 
     date_str = trading_date.strftime("%Y-%m-%d")
     encoded_key = quote(instrument_key, safe="")
-    url = f"{UPSTOX_HISTORICAL_URL}/{encoded_key}/5minute/{date_str}/{date_str}"
+
+    # Upstox uses a different endpoint for today vs historical dates
+    # Interval: 1minute (5minute not supported) — we resample to 5m ourselves
+    today = date.today()
+    if trading_date == today:
+        url = f"{UPSTOX_HISTORICAL_URL}/intraday/{encoded_key}/1minute"
+    else:
+        url = f"{UPSTOX_HISTORICAL_URL}/{encoded_key}/1minute/{date_str}/{date_str}"
 
     try:
         async with httpx.AsyncClient(timeout=15) as client:
@@ -67,8 +74,19 @@ async def fetch_historical_candles(symbol: str, trading_date: date) -> pd.DataFr
             })
 
         df = pd.DataFrame(rows).sort_values("timestamp").reset_index(drop=True)
-        logger.info("Historical candles fetched", symbol=symbol, date=date_str, count=len(df))
-        return df
+
+        # Resample 1-minute candles → 5-minute OHLCV
+        df = df.set_index("timestamp")
+        df5 = df.resample("5min").agg({
+            "open":   "first",
+            "high":   "max",
+            "low":    "min",
+            "close":  "last",
+            "volume": "sum",
+        }).dropna().reset_index()
+
+        logger.info("Historical candles fetched", symbol=symbol, date=date_str, candles_5m=len(df5))
+        return df5
 
     except Exception as e:
         logger.error("Failed to fetch historical candles", symbol=symbol, date=date_str, error=str(e))
