@@ -401,6 +401,107 @@ async def trigger_evaluate_signals(ticks: int = 1):
     return {"ticks_simulated": ticks, "resolved": resolved}
 
 
+async def _simulate_one_day(sim_date, session, count: int = 10, notify: bool = True):
+    """
+    Core simulate logic for a single trading date.
+    Slides through 5m candles, runs strategies, evaluates outcomes against rest of day.
+    Returns list of signal result dicts. notify=False suppresses Telegram alerts.
+    """
+    from app.market_data.historical import fetch_historical_candles
+    from app.signals.generator import generate_signal
+    from app.signals.strike_selector import select_expiry
+    from app.market_data.mock import get_mock_oi_data
+    from app.alerts.telegram import send_signal_alert
+    from app.news.sentiment import get_symbol_sentiment
+    from app.signals.lifecycle import _close_signal
+    from app.db.models import SignalState
+    from app.indicators.vwap import calculate_vwap as _calc_vwap
+    from app.scheduler import _latest_news
+
+    results = []
+    MIN_CANDLES = 50
+
+    for symbol in ["NIFTY", "BANKNIFTY"]:
+        if len(results) >= count:
+            break
+
+        candles_full = await fetch_historical_candles(symbol, sim_date)
+        if candles_full.empty or len(candles_full) < MIN_CANDLES:
+            continue
+
+        for window_end in range(MIN_CANDLES, len(candles_full) + 1):
+            if len(results) >= count:
+                break
+
+            window = candles_full.iloc[:window_end].copy()
+            spot_price = float(window["close"].iloc[-1])
+            _vwap_val = float(_calc_vwap(window).iloc[-1])
+            oi_data = get_mock_oi_data(
+                symbol,
+                bullish=(spot_price > _vwap_val),
+                bearish=(spot_price < _vwap_val),
+            )
+            sentiment = get_symbol_sentiment(symbol, _latest_news)
+            expiry = select_expiry(symbol, reference_date=sim_date)
+
+            signal = await generate_signal(
+                symbol=symbol,
+                candles=window,
+                spot_price=spot_price,
+                oi_data=oi_data,
+                sentiment_label=sentiment,
+                session=session,
+                force=True,
+                source="historical",
+            )
+
+            if signal:
+                await session.commit()
+                if notify:
+                    await send_signal_alert(signal)
+
+                # Evaluate against remaining candles of the day
+                outcome_state = "EXPIRED"
+                outcome_price = None
+                outcome_candle = None
+                for fc in candles_full.iloc[window_end:].itertuples():
+                    close = float(fc.close)
+                    if signal.direction.value == "CALL":
+                        if close >= signal.target:
+                            outcome_state, outcome_price, outcome_candle = "TARGET_HIT", close, str(fc.timestamp)
+                            break
+                        elif close <= signal.stop_loss:
+                            outcome_state, outcome_price, outcome_candle = "SL_HIT", close, str(fc.timestamp)
+                            break
+                    else:
+                        if close <= signal.target:
+                            outcome_state, outcome_price, outcome_candle = "TARGET_HIT", close, str(fc.timestamp)
+                            break
+                        elif close >= signal.stop_loss:
+                            outcome_state, outcome_price, outcome_candle = "SL_HIT", close, str(fc.timestamp)
+                            break
+
+                await _close_signal(signal, SignalState(outcome_state), outcome_price, session)
+                await session.commit()
+
+                results.append({
+                    "symbol": signal.symbol,
+                    "direction": signal.direction.value,
+                    "confidence": signal.confidence,
+                    "entry": signal.entry,
+                    "strike": signal.strike,
+                    "sl": signal.stop_loss,
+                    "target": signal.target,
+                    "signal_id": signal.id,
+                    "signal_time": str(window["timestamp"].iloc[-1]),
+                    "outcome": outcome_state,
+                    "outcome_price": outcome_price,
+                    "outcome_time": outcome_candle,
+                })
+
+    return results
+
+
 @app.post("/trigger/simulate")
 async def trigger_simulate(date: str = None, count: int = 10):
     """
@@ -412,14 +513,7 @@ async def trigger_simulate(date: str = None, count: int = 10):
     count: max signals to generate (default 10)
     """
     from datetime import date as date_type
-    from app.market_data.historical import fetch_historical_candles
-    from app.signals.generator import generate_signal
-    from app.signals.strike_selector import select_expiry
-    from app.market_data.mock import get_mock_oi_data
-    from app.alerts.telegram import send_signal_alert
     from app.utils.market_hours import now_ist
-    from app.news.sentiment import get_symbol_sentiment
-    from app.scheduler import _latest_news
 
     if date:
         try:
@@ -432,104 +526,102 @@ async def trigger_simulate(date: str = None, count: int = 10):
     if not settings.upstox_access_token:
         return {"error": "Live mode required. Set UPSTOX_ACCESS_TOKEN in .env"}
 
-    results = []
-    MIN_CANDLES = 50  # minimum window needed for indicators
-
     async with AsyncSessionLocal() as session:
-        for symbol in ["NIFTY", "BANKNIFTY"]:
-            if len(results) >= count:
-                break
-
-            candles_full = await fetch_historical_candles(symbol, sim_date)
-            if candles_full.empty or len(candles_full) < MIN_CANDLES:
-                continue
-
-            # Slide through the day: try each window from MIN_CANDLES to end
-            for window_end in range(MIN_CANDLES, len(candles_full) + 1):
-                if len(results) >= count:
-                    break
-
-                window = candles_full.iloc[:window_end].copy()
-                spot_price = float(window["close"].iloc[-1])
-                # Align mock OI direction with price action to avoid direction conflicts.
-                # When price is above VWAP → bullish OI; below VWAP → bearish OI.
-                from app.indicators.vwap import calculate_vwap as _calc_vwap
-                _vwap_val = float(_calc_vwap(window).iloc[-1])
-                _bullish = spot_price > _vwap_val
-                _bearish = spot_price < _vwap_val
-                oi_data = get_mock_oi_data(symbol, bullish=_bullish, bearish=_bearish)
-                sentiment = get_symbol_sentiment(symbol, _latest_news)
-                expiry = select_expiry(symbol, reference_date=sim_date)
-
-                signal = await generate_signal(
-                    symbol=symbol,
-                    candles=window,
-                    spot_price=spot_price,
-                    oi_data=oi_data,
-                    sentiment_label=sentiment,
-                    session=session,
-                    force=True,
-                    source="historical",
-                )
-
-                if signal:
-                    await session.commit()
-                    await send_signal_alert(signal)
-
-                    # Evaluate signal against the remaining candles of the day
-                    outcome_state = "EXPIRED"
-                    outcome_price = None
-                    outcome_candle = None
-                    for future_candle in candles_full.iloc[window_end:].itertuples():
-                        close = float(future_candle.close)
-                        if signal.direction.value == "CALL":
-                            if close >= signal.target:
-                                outcome_state = "TARGET_HIT"
-                                outcome_price = close
-                                outcome_candle = str(future_candle.timestamp)
-                                break
-                            elif close <= signal.stop_loss:
-                                outcome_state = "SL_HIT"
-                                outcome_price = close
-                                outcome_candle = str(future_candle.timestamp)
-                                break
-                        else:  # PUT
-                            if close <= signal.target:
-                                outcome_state = "TARGET_HIT"
-                                outcome_price = close
-                                outcome_candle = str(future_candle.timestamp)
-                                break
-                            elif close >= signal.stop_loss:
-                                outcome_state = "SL_HIT"
-                                outcome_price = close
-                                outcome_candle = str(future_candle.timestamp)
-                                break
-
-                    from app.signals.lifecycle import _close_signal
-                    from app.db.models import SignalState
-                    await _close_signal(signal, SignalState(outcome_state), outcome_price, session)
-                    await session.commit()
-
-                    results.append({
-                        "symbol": signal.symbol,
-                        "direction": signal.direction.value,
-                        "confidence": signal.confidence,
-                        "entry": signal.entry,
-                        "strike": signal.strike,
-                        "sl": signal.stop_loss,
-                        "target": signal.target,
-                        "signal_id": signal.id,
-                        "signal_time": str(window["timestamp"].iloc[-1]),
-                        "outcome": outcome_state,
-                        "outcome_price": outcome_price,
-                        "outcome_time": outcome_candle,
-                    })
+        results = await _simulate_one_day(sim_date, session, count=count, notify=True)
 
     return {
         "date": str(sim_date),
         "signals_generated": len(results),
         "requested": count,
         "signals": results,
+    }
+
+
+@app.post("/trigger/backfill")
+async def trigger_backfill(weeks: int = 6, signals_per_day: int = 5):
+    """
+    Replay the past `weeks` weeks of real trading days to build historical signal data.
+    Runs simulate on every trading day, evaluates outcomes, saves to DB.
+    Sends ONE Telegram summary at the end (no per-signal alerts).
+
+    weeks: how many weeks back to go (default 6)
+    signals_per_day: max signals per day per run (default 5)
+    """
+    from datetime import date as date_type, timedelta
+    from app.utils.market_hours import now_ist
+    from app.alerts.telegram import send_text_alert
+
+    if not settings.upstox_access_token:
+        return {"error": "Live mode required. Set UPSTOX_ACCESS_TOKEN in .env"}
+
+    today = now_ist().date()
+    start_date = today - timedelta(weeks=weeks)
+
+    # Build list of weekdays (Mon-Fri) in range — weekends and holidays auto-skipped
+    # (Upstox returns empty data for holidays, _simulate_one_day handles gracefully)
+    all_dates = []
+    d = start_date
+    while d < today:
+        if d.weekday() < 5:  # Mon=0 … Fri=4
+            all_dates.append(d)
+        d += timedelta(days=1)
+
+    logger.info("Starting backfill", weeks=weeks, trading_days=len(all_dates))
+
+    day_results = []
+    total_signals = total_wins = total_losses = total_expired = 0
+
+    async with AsyncSessionLocal() as session:
+        for sim_date in all_dates:
+            signals = await _simulate_one_day(
+                sim_date, session, count=signals_per_day, notify=False
+            )
+            wins = sum(1 for s in signals if s["outcome"] == "TARGET_HIT")
+            losses = sum(1 for s in signals if s["outcome"] == "SL_HIT")
+            expired = sum(1 for s in signals if s["outcome"] == "EXPIRED")
+            total_signals += len(signals)
+            total_wins += wins
+            total_losses += losses
+            total_expired += expired
+            if signals:
+                day_results.append({
+                    "date": str(sim_date),
+                    "signals": len(signals),
+                    "wins": wins,
+                    "losses": losses,
+                    "expired": expired,
+                })
+            logger.info("Backfill day done", date=str(sim_date), signals=len(signals), wins=wins, losses=losses)
+
+    resolved = total_wins + total_losses
+    win_rate = round(total_wins / resolved * 100, 1) if resolved > 0 else None
+
+    # Send one Telegram summary
+    summary_lines = "\n".join(
+        f"  {r['date']}: {r['signals']} signals  ✅{r['wins']} ❌{r['losses']} ⏳{r['expired']}"
+        for r in day_results
+    )
+    await send_text_alert(
+        f"📊 *Backfill Complete — {weeks} weeks*\n\n"
+        f"📅 Trading days processed: {len(all_dates)}\n"
+        f"🔖 Total signals: {total_signals}\n"
+        f"✅ Target hit: {total_wins}\n"
+        f"❌ SL hit: {total_losses}\n"
+        f"⏳ Expired: {total_expired}\n"
+        f"🎯 Win rate: *{win_rate}%*\n\n"
+        f"_Run `make analytics` for full breakdown_"
+    )
+
+    return {
+        "weeks": weeks,
+        "trading_days_checked": len(all_dates),
+        "trading_days_with_signals": len(day_results),
+        "total_signals": total_signals,
+        "total_wins": total_wins,
+        "total_losses": total_losses,
+        "total_expired": total_expired,
+        "win_rate": win_rate,
+        "by_day": day_results,
     }
 
 
