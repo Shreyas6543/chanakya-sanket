@@ -75,6 +75,9 @@ class Signal(Base):
     capital_required: Mapped[float] = mapped_column(Float, nullable=False)
     suggested_lots: Mapped[int] = mapped_column(Integer, default=1)
 
+    # Source — "live" for real Upstox data, "mock" for test/forced signals
+    source: Mapped[str] = mapped_column(String(10), default="live", nullable=False)
+
     # Lifecycle
     state: Mapped[SignalState] = mapped_column(SAEnum(SignalState), default=SignalState.OPEN)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)

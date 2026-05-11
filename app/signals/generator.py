@@ -38,6 +38,7 @@ async def generate_signal(
     sentiment_label: str | None,
     session: AsyncSession,
     force: bool = False,
+    source: str = "live",
 ) -> Signal | None:
     """
     Main signal generation pipeline for one symbol.
@@ -121,6 +122,7 @@ async def generate_signal(
         regime=MarketRegime(regime),
         capital_required=capital_required,
         suggested_lots=suggested_lots,
+        source=source,
     )
     session.add(signal)
     await session.flush()

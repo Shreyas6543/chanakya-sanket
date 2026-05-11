@@ -150,7 +150,7 @@ async def open_signals():
 # ── Daily Report ──────────────────────────────────────────────────────────────
 
 @app.get("/signals/daily-report")
-async def daily_report(date: str = None):
+async def daily_report(date: str = None, include_mock: bool = False):
     """
     Daily signal report for a given date (YYYY-MM-DD). Defaults to today (IST).
     Only includes signals generated in live mode (upstox_access_token was set).
@@ -171,12 +171,15 @@ async def daily_report(date: str = None):
     day_end = datetime.combine(report_date, datetime.max.time())
 
     async with AsyncSessionLocal() as session:
-        result = await session.execute(
+        query = (
             select(Signal, SignalOutcome)
             .outerjoin(SignalOutcome, Signal.id == SignalOutcome.signal_id)
             .where(Signal.created_at >= day_start, Signal.created_at <= day_end)
             .order_by(Signal.created_at.asc())
         )
+        if not include_mock:
+            query = query.where(Signal.source == "live")
+        result = await session.execute(query)
         rows = result.all()
 
     if not rows:
@@ -216,6 +219,7 @@ async def daily_report(date: str = None):
             "expiry": signal.expiry,
             "capital": signal.capital_required,
             "reasons": signal.reasons,
+            "source": signal.source,
             "outcome": result_label or state,
             "pnl": pnl,
         })
@@ -285,6 +289,7 @@ async def trigger_signal_engine(force: bool = False):
                 sentiment_label=sentiment,
                 session=session,
                 force=True,
+                source="mock",
             )
             if signal:
                 await session.commit()

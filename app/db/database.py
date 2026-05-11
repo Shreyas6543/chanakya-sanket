@@ -35,3 +35,9 @@ async def get_db():
 async def create_tables():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Add source column to existing installations that predate this column
+        await conn.execute(
+            __import__("sqlalchemy").text(
+                "ALTER TABLE signals ADD COLUMN IF NOT EXISTS source VARCHAR(10) NOT NULL DEFAULT 'live'"
+            )
+        )
