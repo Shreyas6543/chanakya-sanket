@@ -9,32 +9,50 @@ settings = get_settings()
 TELEGRAM_API = "https://api.telegram.org/bot{token}/sendMessage"
 
 
+REASON_LABELS = {
+    "vwap_breakout":          "VWAP Breakout",
+    "rsi_momentum":           "RSI Momentum",
+    "bullish_engulfing":      "Bullish Engulfing",
+    "bearish_engulfing":      "Bearish Engulfing",
+    "opening_range_breakout": "Opening Range Breakout",
+    "oi_buildup":             "OI Buildup",
+    "positive_sentiment":     "Positive News",
+    "negative_sentiment":     "Negative News",
+}
+
+
 def format_signal_message(signal: Signal) -> str:
-    direction_emoji = "CALL" if signal.direction.value == "CALL" else "PUT"
+    is_call = signal.direction.value == "CALL"
+    dir_emoji = "🟢" if is_call else "🔴"
+    dir_label = "CALL  (BUY CE)" if is_call else "PUT  (BUY PE)"
+    conf_bar = "🔵" * (signal.confidence // 10) + "⚫" * (10 - signal.confidence // 10)
+    regime_emoji = "📈" if signal.regime.value == "TRENDING" else "📊"
+
     reasons_text = "\n".join(
-        f"  • {reason.replace('_', ' ').title()}: +{pts}pts"
-        for reason, pts in signal.reasons.items()
+        f"  ✅ {REASON_LABELS.get(r, r.replace('_', ' ').title())}  +{pts}pts"
+        for r, pts in signal.reasons.items()
     )
 
     return f"""
-*{signal.symbol} {direction_emoji} SIGNAL*
+{dir_emoji} *{signal.symbol}  —  {dir_label}*
+\u2015\u2015\u2015\u2015\u2015\u2015\u2015\u2015\u2015\u2015\u2015\u2015\u2015\u2015\u2015\u2015\u2015\u2015\u2015\u2015
 
-Strike: `{signal.strike:.0f}`  |  Expiry: `{signal.expiry}`
-Entry: `{signal.entry:.2f}`
-Stop Loss: `{signal.stop_loss:.2f}`
-Target: `{signal.target:.2f}`
+🎯 *Strike:* `{signal.strike:.0f}`   📅 *Expiry:* `{signal.expiry}`
 
-Confidence: *{signal.confidence}%*
-Regime: {signal.regime.value}
+💰 *Entry:*       `{signal.entry:.2f}`
+🛑 *Stop Loss:* `{signal.stop_loss:.2f}`
+🏁 *Target:*      `{signal.target:.2f}`
 
-Reasons:
+📊 *Confidence:* {conf_bar} *{signal.confidence}%*
+{regime_emoji} *Regime:* {signal.regime.value.title()}
+
+🧠 *Why this signal?*
 {reasons_text}
 
-Capital Required: ₹{signal.capital_required:,.0f}
-Suggested Lots: {signal.suggested_lots}
-Signal ID: #{signal.id}
+💼 *Capital:* ₹{signal.capital_required:,.0f}   *Lots:* {signal.suggested_lots}
+🔖 _Signal #{signal.id}_
 
-_Paper trade only — do not auto-execute_
+_⚠️ Paper trade only — do not auto-execute_
 """.strip()
 
 
