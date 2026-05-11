@@ -257,12 +257,19 @@ candles
 | Strategy | Points | Condition |
 |---|---|---|
 | OI Buildup | +25 | Call OI up >5%, Put OI down >5% |
-| VWAP Breakout | +20 | Price crosses above VWAP + volume spike >1.5x |
-| RSI Momentum | +15 | RSI crosses above 55 + EMA9 > EMA21 > EMA50 |
+| VWAP Breakout | +20 | Price crosses above VWAP + volume spike >1.5x (volume check skipped for zero-volume indices) |
+| RSI Momentum | +15 | RSI crosses above 55 within last 5 candles (lookback=5) + EMA9 > EMA21 > EMA50 |
 | Bullish Engulfing | +15 | Engulfing candle within 0.2% of VWAP |
-| Opening Range Breakout | +15 | Price breaks first-15m high with volume |
+| Opening Range Breakout | +15 | Price breaks first-15m high (volume check skipped for zero-volume indices) |
 | Positive Sentiment | +10 | VADER compound > 0.05 on relevant news |
-| **Minimum to fire** | **65** | Configurable via `MIN_CONFIDENCE_SCORE` in .env |
+| **Minimum to fire** | **60** | Configurable via `MIN_CONFIDENCE_SCORE` in .env |
+
+**Real market calibration notes:**
+- NSE index instruments (NIFTY/BANKNIFTY) have zero volume in Upstox — volume checks are bypassed
+- `rsi_crossed_above` uses lookback=5 (25 min window) so RSI cross aligns with later VWAP breakout
+- Real data max score is typically 55-65 pts; mock data was artificially tuned to 100 pts
+- On a sell-off day (market opens high, falls) ORB fires PUT; on breakout days all 3-4 CALL strategies align
+- Simulate endpoint uses price-vs-VWAP to set OI mock direction, avoiding CALL/PUT conflicts
 
 ---
 
@@ -359,6 +366,8 @@ Re-authenticate every morning: open http://localhost:8000/auth/login in browser.
 - [x] Makefile for single-command workflow
 
 ### Phase 2 — Paper Trading Validation — IN PROGRESS
+- [x] Strategy calibration for real index market data (volume=0 fixes, RSI lookback, min score 65→60)
+- [x] Historical simulation (`make simulate DATE=YYYY-MM-DD`) — verified: May 7 gives 3 signals, May 6 (sell-off) gives 0
 - [ ] Historical candle seeding on startup (currently empty buffer on fresh start)
 - [ ] Daily token auto-refresh (token expires at midnight, manual re-login required)
 - [ ] Accumulate 50–100 real live signals over 4–6 weeks
