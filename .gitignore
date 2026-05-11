@@ -25,3 +25,4 @@ build/
 # DB / data
 *.db
 *.sqlite3
+data/

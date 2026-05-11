@@ -446,6 +446,7 @@ async def _simulate_one_day(
     from app.signals.generator import generate_signal
     from app.signals.strike_selector import select_expiry
     from app.market_data.mock import get_mock_oi_data
+    from app.market_data.real_oi import get_real_oi_data, oi_data_available
     from app.alerts.telegram import send_signal_alert
     from app.news.sentiment import get_symbol_sentiment
     from app.signals.lifecycle import _close_signal
@@ -477,11 +478,14 @@ async def _simulate_one_day(
             window = candles_full.iloc[:window_end].copy()
             spot_price = float(window["close"].iloc[-1])
             _vwap_val = float(_calc_vwap(window).iloc[-1])
-            oi_data = get_mock_oi_data(
-                symbol,
-                bullish=(spot_price > _vwap_val),
-                bearish=(spot_price < _vwap_val),
-            )
+            if oi_data_available():
+                oi_data = get_real_oi_data(symbol, sim_date) or get_mock_oi_data(
+                    symbol, bullish=(spot_price > _vwap_val), bearish=(spot_price < _vwap_val)
+                )
+            else:
+                oi_data = get_mock_oi_data(
+                    symbol, bullish=(spot_price > _vwap_val), bearish=(spot_price < _vwap_val)
+                )
             sentiment = get_symbol_sentiment(symbol, _latest_news)
             expiry = select_expiry(symbol, reference_date=sim_date)
 
