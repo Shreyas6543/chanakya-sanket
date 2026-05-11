@@ -1,4 +1,4 @@
-.PHONY: help dev infra stop logs status trigger debug analytics
+.PHONY: help dev infra stop logs status trigger debug analytics report
 
 PYTHON := .venv/bin/python3
 UVICORN := .venv/bin/uvicorn
@@ -50,3 +50,8 @@ debug:
 
 analytics:
 	@curl -s $(API)/analytics | $(PYTHON) -m json.tool
+
+# Daily report: make report          → today
+#               make report DATE=2026-05-11  → specific date
+report:
+	@curl -s "$(API)/signals/daily-report$(if $(DATE),?date=$(DATE),)" | $(PYTHON) -m json.tool

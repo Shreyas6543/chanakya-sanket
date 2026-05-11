@@ -1,5 +1,6 @@
 import asyncio
 import structlog
+from datetime import datetime
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
@@ -144,6 +145,93 @@ async def open_signals():
              "confidence": s.confidence, "entry": s.entry, "state": s.state.value}
             for s in signals
         ]}
+
+
+# ── Daily Report ──────────────────────────────────────────────────────────────
+
+@app.get("/signals/daily-report")
+async def daily_report(date: str = None):
+    """
+    Daily signal report for a given date (YYYY-MM-DD). Defaults to today (IST).
+    Only includes signals generated in live mode (upstox_access_token was set).
+    """
+    from datetime import date as date_type
+    from app.utils.market_hours import now_ist
+    from app.db.models import SignalOutcome
+
+    if date:
+        try:
+            report_date = date_type.fromisoformat(date)
+        except ValueError:
+            return {"error": "Invalid date format. Use YYYY-MM-DD"}
+    else:
+        report_date = now_ist().date()
+
+    day_start = datetime.combine(report_date, datetime.min.time())
+    day_end = datetime.combine(report_date, datetime.max.time())
+
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Signal, SignalOutcome)
+            .outerjoin(SignalOutcome, Signal.id == SignalOutcome.signal_id)
+            .where(Signal.created_at >= day_start, Signal.created_at <= day_end)
+            .order_by(Signal.created_at.asc())
+        )
+        rows = result.all()
+
+    if not rows:
+        return {"date": str(report_date), "message": "No signals found for this date", "total": 0}
+
+    signals_out = []
+    wins = losses = open_count = expired = 0
+    total_pnl = 0.0
+
+    for signal, outcome in rows:
+        state = signal.state.value
+        pnl = round(outcome.pnl, 2) if outcome and outcome.pnl is not None else None
+        result_label = outcome.result if outcome else None
+
+        if state == "TARGET_HIT":
+            wins += 1
+        elif state == "SL_HIT":
+            losses += 1
+        elif state == "OPEN":
+            open_count += 1
+        elif state == "EXPIRED":
+            expired += 1
+
+        if pnl:
+            total_pnl += pnl
+
+        signals_out.append({
+            "id": signal.id,
+            "time": signal.created_at.strftime("%H:%M"),
+            "symbol": signal.symbol,
+            "direction": signal.direction.value,
+            "confidence": signal.confidence,
+            "entry": signal.entry,
+            "sl": signal.stop_loss,
+            "target": signal.target,
+            "strike": signal.strike,
+            "expiry": signal.expiry,
+            "capital": signal.capital_required,
+            "reasons": signal.reasons,
+            "outcome": result_label or state,
+            "pnl": pnl,
+        })
+
+    resolved = wins + losses
+    return {
+        "date": str(report_date),
+        "total_signals": len(signals_out),
+        "wins": wins,
+        "losses": losses,
+        "open": open_count,
+        "expired": expired,
+        "win_rate": round(wins / resolved * 100, 1) if resolved > 0 else None,
+        "total_pnl": round(total_pnl, 2),
+        "signals": signals_out,
+    }
 
 
 # ── Analytics ─────────────────────────────────────────────────────────────────
