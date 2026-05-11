@@ -12,7 +12,7 @@ from app.auth.upstox import get_login_url, exchange_code_for_token, save_token_t
 from app.scheduler import create_scheduler, run_signal_engine, fetch_news_job
 from app.market_data.websocket_client import ws_client
 from app.market_data.mock import generate_mock_candles
-from app.analytics.engine import get_overall_stats, get_reason_accuracy, get_regime_performance
+from app.analytics.engine import get_overall_stats, get_reason_accuracy, get_regime_performance, get_time_of_day_performance, get_strategy_combo_performance
 from app.db.models import Signal, SignalState
 from sqlalchemy import select
 
@@ -273,6 +273,8 @@ async def analytics():
             "overall": await get_overall_stats(session),
             "by_reason": await get_reason_accuracy(session),
             "by_regime": await get_regime_performance(session),
+            "by_hour": await get_time_of_day_performance(session),
+            "by_strategy_combo": await get_strategy_combo_performance(session),
         }
 
 

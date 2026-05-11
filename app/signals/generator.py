@@ -97,7 +97,42 @@ async def generate_signal(
     # NOTE: entry/sl/target are INDEX levels (spot price), not option premiums.
     # Option premium is estimated separately for capital sizing.
     from app.indicators.atr import current_atr
+    from app.indicators.rsi import calculate_rsi
+    from app.indicators.vwap import calculate_vwap
     atr = current_atr(candles)
+
+    # Build signal context snapshot — market conditions at this exact moment
+    _vwap_series = calculate_vwap(candles)
+    _vwap_val = float(_vwap_series.iloc[-1])
+    _rsi_val = float(calculate_rsi(candles["close"]).iloc[-1])
+    _vwap_dist_pct = round((spot_price - _vwap_val) / _vwap_val * 100, 3) if _vwap_val else 0
+    _pcr = round(oi_data["put_oi"] / oi_data["call_oi"], 3) if oi_data and oi_data.get("call_oi") else None
+
+    # Extract signal timestamp from candle index
+    _sig_time = None
+    if hasattr(candles.index, "name") and candles.index.dtype == "datetime64[ns, UTC]":
+        _sig_time = candles.index[-1].isoformat()
+    elif "timestamp" in candles.columns:
+        _sig_time = str(candles["timestamp"].iloc[-1])
+
+    try:
+        _hour = int(candles.index[-1].hour)
+        _minute = int(candles.index[-1].minute)
+    except (AttributeError, TypeError):
+        _hour = _minute = None
+
+    signal_context = {
+        "signal_time": _sig_time,
+        "hour": _hour,
+        "minute": _minute,
+        "rsi": round(_rsi_val, 2),
+        "vwap_distance_pct": _vwap_dist_pct,
+        "atr": round(atr, 2),
+        "pcr": _pcr,
+        "ce_oi": oi_data.get("call_oi") if oi_data else None,
+        "pe_oi": oi_data.get("put_oi") if oi_data else None,
+        "strategies_fired": [r.reason for r in strategy_results if r.fired],
+    }
     entry = spot_price
     _sl_mult = sl_multiplier if sl_multiplier is not None else 1.0
     _tgt_mult = target_multiplier if target_multiplier is not None else 2.0
@@ -139,6 +174,7 @@ async def generate_signal(
         capital_required=capital_required,
         suggested_lots=suggested_lots,
         source=source,
+        signal_context=signal_context,
     )
     session.add(signal)
     await session.flush()

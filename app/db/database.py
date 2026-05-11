@@ -41,3 +41,9 @@ async def create_tables():
                 "ALTER TABLE signals ADD COLUMN IF NOT EXISTS source VARCHAR(10) NOT NULL DEFAULT 'live'"
             )
         )
+        # Add signal_context JSON column for market condition snapshots at signal time
+        await conn.execute(
+            __import__("sqlalchemy").text(
+                "ALTER TABLE signals ADD COLUMN IF NOT EXISTS signal_context JSONB"
+            )
+        )

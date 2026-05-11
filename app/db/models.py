@@ -78,6 +78,10 @@ class Signal(Base):
     # Source — "live" for real Upstox data, "mock" for test/forced signals
     source: Mapped[str] = mapped_column(String(10), default="live", nullable=False)
 
+    # Signal context snapshot — market conditions at the exact moment the signal fired
+    # Keys: signal_time, hour, minute, rsi, vwap_distance_pct, atr, pcr, ce_oi, pe_oi, strategies_fired
+    signal_context: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
     # Lifecycle
     state: Mapped[SignalState] = mapped_column(SAEnum(SignalState), default=SignalState.OPEN)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
