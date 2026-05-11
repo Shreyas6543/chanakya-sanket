@@ -178,7 +178,7 @@ async def daily_report(date: str = None, include_mock: bool = False):
             .order_by(Signal.created_at.asc())
         )
         if not include_mock:
-            query = query.where(Signal.source == "live")
+            query = query.where(Signal.source.in_(["live", "historical"]))
         result = await session.execute(query)
         rows = result.all()
 
@@ -399,6 +399,92 @@ async def trigger_evaluate_signals(ticks: int = 1):
         )
 
     return {"ticks_simulated": ticks, "resolved": resolved}
+
+
+@app.post("/trigger/simulate")
+async def trigger_simulate(date: str = None, count: int = 10):
+    """
+    Replay a real trading day using Upstox historical candles.
+    Slides through the day's 5m candles, runs the signal engine at each window,
+    stops after generating `count` signals. Signals tagged source='historical'.
+
+    date: YYYY-MM-DD (defaults to today)
+    count: max signals to generate (default 10)
+    """
+    from datetime import date as date_type
+    from app.market_data.historical import fetch_historical_candles
+    from app.signals.generator import generate_signal
+    from app.signals.strike_selector import select_expiry
+    from app.market_data.mock import get_mock_oi_data
+    from app.alerts.telegram import send_signal_alert
+    from app.utils.market_hours import now_ist
+    from app.news.sentiment import get_symbol_sentiment
+    from app.scheduler import _latest_news
+
+    if date:
+        try:
+            sim_date = date_type.fromisoformat(date)
+        except ValueError:
+            return {"error": "Invalid date format. Use YYYY-MM-DD"}
+    else:
+        sim_date = now_ist().date()
+
+    if not settings.upstox_access_token:
+        return {"error": "Live mode required. Set UPSTOX_ACCESS_TOKEN in .env"}
+
+    results = []
+    MIN_CANDLES = 50  # minimum window needed for indicators
+
+    async with AsyncSessionLocal() as session:
+        for symbol in ["NIFTY", "BANKNIFTY"]:
+            if len(results) >= count:
+                break
+
+            candles_full = await fetch_historical_candles(symbol, sim_date)
+            if candles_full.empty or len(candles_full) < MIN_CANDLES:
+                continue
+
+            # Slide through the day: try each window from MIN_CANDLES to end
+            for window_end in range(MIN_CANDLES, len(candles_full) + 1):
+                if len(results) >= count:
+                    break
+
+                window = candles_full.iloc[:window_end].copy()
+                spot_price = float(window["close"].iloc[-1])
+                oi_data = get_mock_oi_data(symbol, bullish=True)  # OI: use mock until historical OI available
+                sentiment = get_symbol_sentiment(symbol, _latest_news)
+                expiry = select_expiry(symbol, reference_date=sim_date)
+
+                signal = await generate_signal(
+                    symbol=symbol,
+                    candles=window,
+                    spot_price=spot_price,
+                    oi_data=oi_data,
+                    sentiment_label=sentiment,
+                    session=session,
+                    force=True,
+                    source="historical",
+                )
+
+                if signal:
+                    await session.commit()
+                    await send_signal_alert(signal)
+                    results.append({
+                        "symbol": signal.symbol,
+                        "direction": signal.direction.value,
+                        "confidence": signal.confidence,
+                        "entry": signal.entry,
+                        "strike": signal.strike,
+                        "signal_id": signal.id,
+                        "candle_time": str(window["timestamp"].iloc[-1]),
+                    })
+
+    return {
+        "date": str(sim_date),
+        "signals_generated": len(results),
+        "requested": count,
+        "signals": results,
+    }
 
 
 @app.post("/trigger/test-signal")

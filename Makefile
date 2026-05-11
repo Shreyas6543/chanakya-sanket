@@ -1,4 +1,4 @@
-.PHONY: help dev infra stop logs status trigger debug analytics report
+.PHONY: help dev infra stop logs status trigger debug analytics report simulate
 
 PYTHON := .venv/bin/python3
 UVICORN := .venv/bin/uvicorn
@@ -17,6 +17,7 @@ help:
 	@echo "  make evaluate     Fast-forward 60 ticks (resolve signals)"
 	@echo "  make debug        Debug all strategies for NIFTY"
 	@echo "  make analytics    Show win rate + P&L"
+	@echo "  make simulate     Replay a date using real Upstox historical candles"
 	@echo ""
 
 infra:
@@ -55,3 +56,10 @@ analytics:
 #               make report DATE=2026-05-11  → specific date
 report:
 	@curl -s "$(API)/signals/daily-report$(if $(DATE),?date=$(DATE),)" | $(PYTHON) -m json.tool
+
+# Simulate a real trading day using Upstox historical candles
+# make simulate                           → today, 10 signals
+# make simulate DATE=2026-05-11          → specific date, 10 signals
+# make simulate DATE=2026-05-11 COUNT=5  → specific date, 5 signals
+simulate:
+	@curl -s -X POST "$(API)/trigger/simulate$(if $(DATE),?date=$(DATE)$(if $(COUNT),\&count=$(COUNT),),$(if $(COUNT),?count=$(COUNT),))" | $(PYTHON) -m json.tool
