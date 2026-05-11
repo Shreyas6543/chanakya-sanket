@@ -17,7 +17,9 @@ from app.utils.market_hours import can_generate_signals
 logger = structlog.get_logger()
 settings = get_settings()
 
-# BullishEngulfing removed — backtested 14.3% win rate vs 33.3% break-even (6-week data)
+# BullishEngulfing removed — backtested 14.3% win rate vs 33.3% break-even (6-week data).
+# All other strategies retained at original weights — confirmed best on 6-month backtest:
+# VWAP=20, RSI=15, OI=30, ORB=15, min=60 → 44.8% WR on 512 signals (Nov 2025–May 2026).
 STRATEGIES = [
     VWAPBreakoutStrategy(),
     RSIMomentumStrategy(),
@@ -38,6 +40,13 @@ async def generate_signal(
     session: AsyncSession,
     force: bool = False,
     source: str = "live",
+    min_confidence: int | None = None,
+    points_vwap: int | None = None,
+    points_rsi: int | None = None,
+    points_oi: int | None = None,
+    points_orb: int | None = None,
+    target_multiplier: float | None = None,
+    sl_multiplier: float | None = None,
 ) -> Signal | None:
     """
     Main signal generation pipeline for one symbol.
@@ -50,6 +59,7 @@ async def generate_signal(
     regime = detect_regime(candles)
     is_sideways = regime == "SIDEWAYS"
 
+
     strategy_results = []
     for strategy in STRATEGIES:
         if is_sideways and strategy.name in BREAKOUT_STRATEGIES:
@@ -57,9 +67,14 @@ async def generate_signal(
         result = strategy.evaluate(candles, oi_data)
         strategy_results.append(result)
 
-    confidence = calculate_confidence(strategy_results, sentiment_label)
+    confidence = calculate_confidence(
+        strategy_results, sentiment_label,
+        points_vwap=points_vwap, points_rsi=points_rsi,
+        points_oi=points_oi, points_orb=points_orb,
+    )
 
-    if confidence.score < settings.min_confidence_score:
+    threshold = min_confidence if min_confidence is not None else settings.min_confidence_score
+    if confidence.score < threshold:
         return None
 
     if confidence.direction is None:
@@ -84,12 +99,14 @@ async def generate_signal(
     from app.indicators.atr import current_atr
     atr = current_atr(candles)
     entry = spot_price
+    _sl_mult = sl_multiplier if sl_multiplier is not None else 1.0
+    _tgt_mult = target_multiplier if target_multiplier is not None else 2.0
     if confidence.direction == "CALL":
-        stop_loss = round(entry - atr, 2)
-        target = round(entry + (2 * atr), 2)
+        stop_loss = round(entry - atr * _sl_mult, 2)
+        target = round(entry + atr * _tgt_mult, 2)
     else:
-        stop_loss = round(entry + atr, 2)
-        target = round(entry - (2 * atr), 2)
+        stop_loss = round(entry + atr * _sl_mult, 2)
+        target = round(entry - atr * _tgt_mult, 2)
 
     # Lot sizes from config (NSE can change these)
     lot_size = settings.nifty_lot_size if symbol.upper() == "NIFTY" else settings.banknifty_lot_size

@@ -256,13 +256,14 @@ candles
 ## Confidence Scoring Formula
 | Strategy | Points | Condition |
 |---|---|---|
-| OI Buildup | +25 | Call OI up >5%, Put OI down >5% |
+| OI Buildup | +30 | Call OI up >5%, Put OI down >5% (or reverse for PUT) |
 | VWAP Breakout | +20 | Price crosses above VWAP + volume spike >1.5x (volume check skipped for zero-volume indices) |
 | RSI Momentum | +15 | RSI crosses above 55 within last 5 candles (lookback=5) + EMA9 > EMA21 > EMA50 |
-| Bullish Engulfing | +15 | Engulfing candle within 0.2% of VWAP |
-| Opening Range Breakout | +15 | Price breaks first-15m high (volume check skipped for zero-volume indices) |
+| Opening Range Breakout | +15 | Price breaks first-15m high/low (volume check skipped for zero-volume indices) |
 | Positive Sentiment | +10 | VADER compound > 0.05 on relevant news |
 | **Minimum to fire** | **60** | Configurable via `MIN_CONFIDENCE_SCORE` in .env |
+
+**Note:** BullishEngulfing strategy removed — backtested at 14.3% WR vs 33.3% break-even.
 
 **Real market calibration notes:**
 - NSE index instruments (NIFTY/BANKNIFTY) have zero volume in Upstox — volume checks are bypassed
@@ -270,6 +271,63 @@ candles
 - Real data max score is typically 55-65 pts; mock data was artificially tuned to 100 pts
 - On a sell-off day (market opens high, falls) ORB fires PUT; on breakout days all 3-4 CALL strategies align
 - Simulate endpoint uses price-vs-VWAP to set OI mock direction, avoiding CALL/PUT conflicts
+
+---
+
+## Backtesting Research Findings (6-month dataset, Nov 2025 – May 2026)
+
+**Dataset:** 512 signals across 130 trading days on real Upstox OHLCV data.
+**Baseline config wins:** VWAP=20, RSI=15, OI=30, ORB=15, min=60 → **44.8% WR** (break-even = 33.3%)
+
+### Monthly WR breakdown
+| Month | WR | Notes |
+|---|---|---|
+| Nov 2025 | 34.4% | Marginally above break-even |
+| Dec 2025 | 21.5% | **Danger zone — year-end thin liquidity, FII rebalancing** |
+| Jan 2026 | 47.5% | Good |
+| Feb 2026 | 59.8% | Strong trending period |
+| Mar 2026 | 64.8% | Best — clear directional moves |
+| Apr 2026 | 42.2% | OK — some choppy days |
+
+### Confidence score vs WR (counterintuitive)
+Higher confidence REDUCES win rate — high-confidence signals fire late in the move:
+| Confidence | WR |
+|---|---|
+| 60-64 | **43.3%** (best) |
+| 65-69 | 43.4% |
+| 70-74 | 39.4% |
+| 75-79 | 37.5% |
+| 80+ | 32.2% |
+**Implication: Do NOT raise MIN_CONFIDENCE_SCORE above 60.**
+
+### R:R ratio analysis — Edge above break-even
+Current 2×ATR target has the highest net edge:
+| Target | WR | Break-even | Edge |
+|---|---|---|---|
+| 1.2×ATR | 54.2% | 45.5% | +8.7% |
+| 1.8×ATR | 47.7% | 35.7% | +12.0% |
+| **2.0×ATR (current)** | **44.8%** | **33.3%** | **+11.5%** |
+| 3.0×ATR | 34.8% | 25.0% | +9.8% |
+
+### CALL vs PUT direction bias
+PUT signals significantly outperformed during bearish Nov 2025 – May 2026 period:
+- CALL: 37.4% WR (market was in corrective phase)
+- **PUT: 48.3% WR**
+This is market-regime dependent, not a structural advantage of PUT strategies.
+
+### Circuit breaker (scheduler.py)
+- `_consecutive_losses`: per-symbol gate — skip symbol after 2 consecutive SL_HITs
+- `_daily_losses_total`: global gate — stop ALL signals after 3 SL_HITs in a day
+- Both reset at 9:15 AM morning_startup_job
+- Wipeout days capped at 3 losses instead of 5 (saves ~2 bad trades per bad day)
+
+### Backfill endpoint parameters (for strategy research)
+`POST /trigger/backfill` accepts:
+- `start_date`, `end_date` — explicit date range (overrides `weeks`)
+- `min_confidence` — override confidence threshold
+- `points_vwap`, `points_rsi`, `points_oi`, `points_orb` — per-strategy weight overrides
+- `target_multiplier`, `sl_multiplier` — R:R ratio overrides (default: target=2.0, sl=1.0)
+- `signals_per_day` — max signals per trading day (default 10)
 
 ---
 
@@ -367,11 +425,16 @@ Re-authenticate every morning: open http://localhost:8000/auth/login in browser.
 
 ### Phase 2 — Paper Trading Validation — IN PROGRESS
 - [x] Strategy calibration for real index market data (volume=0 fixes, RSI lookback, min score 65→60)
-- [x] Historical simulation (`make simulate DATE=YYYY-MM-DD`) — verified: May 7 gives 3 signals, May 6 (sell-off) gives 0
-- [ ] Historical candle seeding on startup (currently empty buffer on fresh start)
-- [ ] Daily token auto-refresh (token expires at midnight, manual re-login required)
+- [x] Historical simulation (`make simulate DATE=YYYY-MM-DD`) — verified working
+- [x] 6-month backtest (Nov 2025 – May 2026) — 512 signals, **44.8% WR** (vs 33.3% break-even)
+- [x] Confidence score / R:R / direction analysis completed — original config confirmed optimal
+- [x] Circuit breaker (3 SL_HITs/day stops all signals) + per-symbol consecutive loss gate
+- [x] PUT/CALL support across all strategies (direction-aware SL/target/evaluation)
+- [x] Backfill endpoint with full grid-search parameter overrides
+- [x] Historical candle seeding on startup (`seed_candles()` in lifespan)
+- [ ] **Daily token auto-refresh** — token expires at midnight, manual re-login required (NEXT)
 - [ ] Accumulate 50–100 real live signals over 4–6 weeks
-- [ ] Review by_reason analytics to identify strongest strategies
+- [ ] Store signal_time (candle timestamp) in signals table for time-of-day WR analysis
 
 ### Phase 3 — Analytics Dashboard (not started)
 ### Phase 4 — Strategy Optimization (not started)
@@ -381,8 +444,9 @@ Re-authenticate every morning: open http://localhost:8000/auth/login in browser.
 ---
 
 ## Known Issues / Next Up
-1. **Historical candle seeding** — On startup in live mode, candle buffer is empty. Strategies need 50+ candles. Upstox historical API is free and available — seed on startup.
-2. **Daily token refresh** — Upstox access tokens expire at midnight. Current flow: open browser → `/auth/login` → re-authenticate manually. Should be simplified.
+1. **Daily token refresh** — Upstox access tokens expire at midnight. Current flow: open browser → `/auth/login` → re-authenticate manually. This is the #1 operational risk for live data collection.
+2. **signal_time not stored** — The candle timestamp when a signal fired is returned in simulate/backfill responses but NOT stored in the `signals` table. Add `signal_time` column for time-of-day WR analysis.
+3. **December seasonal pattern** — Dec 2025 showed 21.5% WR (well below break-even). Year-end thin liquidity, FII rebalancing, holiday season. Consider reducing position size or skipping December. No intraday filter can reliably detect this.
 
 ---
 

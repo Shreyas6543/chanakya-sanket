@@ -39,6 +39,22 @@ async def exchange_code_for_token(code: str) -> str:
         return token
 
 
+async def validate_token() -> bool:
+    """Check if the current access token is still valid."""
+    token = get_settings().upstox_access_token
+    if not token:
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.get(
+                "https://api.upstox.com/v2/user/profile",
+                headers={"Authorization": f"Bearer {token}", "Api-Version": "2.0"},
+            )
+            return resp.status_code == 200
+    except Exception:
+        return False
+
+
 def save_token_to_env(token: str):
     """Write the access token back into .env file."""
     env_path = ".env"

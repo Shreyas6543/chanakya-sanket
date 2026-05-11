@@ -37,6 +37,12 @@ _latest_news: list[dict] = []
 _consecutive_losses: dict[str, int] = {"NIFTY": 0, "BANKNIFTY": 0}
 MAX_CONSECUTIVE_LOSSES = 2
 
+# Global daily circuit breaker — if total SL hits across ALL symbols >= this,
+# stop all signal generation for the rest of the day.
+# Prevents wipeout days (e.g. 5 losses on Apr 10, 15, 28, 30 in backtest).
+_daily_losses_total: int = 0
+MAX_DAILY_LOSSES = 3
+
 
 async def run_signal_engine():
     """
@@ -45,6 +51,11 @@ async def run_signal_engine():
     """
     if not can_generate_signals():
         logger.debug("Outside signal generation window — skipping")
+        return
+
+    if _daily_losses_total >= MAX_DAILY_LOSSES:
+        logger.info("Signal engine paused — daily loss circuit breaker active",
+                    daily_losses=_daily_losses_total)
         return
 
     logger.info("Signal engine running", mock=USE_MOCK)
@@ -126,12 +137,23 @@ async def evaluate_open_signals():
 
             if new_state:
                 await session.commit()
-                # Update consecutive loss counter
+                # Update consecutive loss counter + global circuit breaker
                 if new_state == "SL_HIT":
                     _consecutive_losses[signal.symbol] = _consecutive_losses.get(signal.symbol, 0) + 1
                     if _consecutive_losses[signal.symbol] >= MAX_CONSECUTIVE_LOSSES:
                         logger.info("Consecutive loss gate triggered", symbol=signal.symbol,
                                     count=_consecutive_losses[signal.symbol])
+
+                    global _daily_losses_total
+                    _daily_losses_total += 1
+                    if _daily_losses_total == MAX_DAILY_LOSSES:
+                        logger.warning("Daily circuit breaker tripped — signals paused for today",
+                                       total_losses=_daily_losses_total)
+                        await send_text_alert(
+                            f"*⚡ Circuit Breaker Triggered*\n"
+                            f"3 stop-losses hit today\\. Signal generation paused for the rest of the session\\.\n"
+                            f"Resume tomorrow at 9:15 AM\\."
+                        )
                 else:
                     _consecutive_losses[signal.symbol] = 0  # reset on win or expiry
 
@@ -181,10 +203,33 @@ async def get_eod_stats() -> dict:
         return await get_overall_stats(session)
 
 
+async def token_check_job():
+    """
+    Runs at 8:45 IST Mon-Fri — checks if the Upstox token is valid.
+    If expired, sends a Telegram reminder with the login link before market open.
+    """
+    from app.auth.upstox import validate_token
+    valid = await validate_token()
+    if not valid:
+        logger.warning("Upstox token is expired or missing — sending reminder")
+        await send_text_alert(
+            "*⚠️ Upstox Token Expired*\n\n"
+            "Market opens in 30 minutes\\. Re\\-authenticate now:\n\n"
+            "1\\. Open your Mac\n"
+            "2\\. Go to: `http://localhost:8000/auth/login`\n"
+            "3\\. Log in to Upstox \\(takes 30 seconds\\)\n\n"
+            "_Signal engine will switch to live mode automatically\\._"
+        )
+    else:
+        logger.info("Token check passed — Upstox token is valid")
+
+
 async def morning_startup_job():
     """Runs at 09:15 IST — sends market open notification and seeds initial candles."""
     logger.info("Market open — seeding initial candle data")
 
+    global _daily_losses_total
+    _daily_losses_total = 0  # reset circuit breaker for new day
     for symbol in ["NIFTY", "BANKNIFTY"]:
         clear_candles(symbol)
         _consecutive_losses[symbol] = 0  # reset loss gate for new day
@@ -248,6 +293,19 @@ def create_scheduler() -> AsyncIOScheduler:
         IntervalTrigger(minutes=15),
         id="news_fetcher",
         name="News Fetcher",
+    )
+
+    # Token check — 8:45 IST weekdays (30 min before market open)
+    scheduler.add_job(
+        token_check_job,
+        CronTrigger(
+            day_of_week="mon-fri",
+            hour=8,
+            minute=45,
+            timezone="Asia/Kolkata",
+        ),
+        id="token_check",
+        name="Token Check",
     )
 
     # Morning startup — 9:15 IST weekdays

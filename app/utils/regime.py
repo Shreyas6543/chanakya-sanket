@@ -40,3 +40,26 @@ def detect_regime(candles: pd.DataFrame, atr_period: int = 14, ma_period: int = 
         return "SIDEWAYS"
 
     return "TRENDING"
+
+
+def trend_efficiency(candles: pd.DataFrame) -> float:
+    """
+    Kaufman Efficiency Ratio: net directional move / total price path.
+
+    Range: 0.0 (pure chop) → 1.0 (perfect trend).
+    A value < 0.5 means the market has been going back-and-forth more than forward —
+    breakout signals on such days tend to be false and reverse immediately.
+
+    Formula: abs(close[-1] - close[0]) / (high.max() - low.min())
+    Uses the full candle window passed in (typically the 50-100 candle buffer).
+    """
+    if len(candles) < 10:
+        return 1.0  # Not enough data — don't filter
+
+    net_move = abs(float(candles["close"].iloc[-1]) - float(candles["close"].iloc[0]))
+    total_range = float(candles["high"].max()) - float(candles["low"].min())
+
+    if total_range == 0:
+        return 1.0
+
+    return round(net_move / total_range, 3)

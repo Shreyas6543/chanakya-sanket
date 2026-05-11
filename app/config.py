@@ -36,10 +36,15 @@ class Settings(BaseSettings):
     risk_per_trade_pct: float = 1.5           # Risk (SL distance) as % of capital
     max_daily_loss_pct: float = 5.0
     max_open_signals_per_symbol: int = 2
-    min_confidence_score: int = 65
+    min_confidence_score: int = 60
 
     # ATR regime threshold (fraction of 20-period average)
     atr_sideways_threshold: float = 0.70
+
+    # Trend Efficiency filter — skip signal if market efficiency ratio < this value.
+    # Efficiency = net directional move / total range. < 0.5 = choppy/whipsaw day.
+    # Backtested threshold: 0.50 separates all 4 wipeout days from winning days.
+    min_trend_efficiency: float = 0.50
 
     # Lot sizes (NSE standard — update if NSE changes them)
     nifty_lot_size: int = 25

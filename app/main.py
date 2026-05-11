@@ -27,6 +27,21 @@ async def lifespan(app: FastAPI):
     await create_tables()
     logger.info("Database tables ready")
 
+    # Startup token check — alert immediately if token is missing on a weekday
+    from app.auth.upstox import validate_token
+    from app.utils.market_hours import now_ist as _now_ist
+    from app.alerts.telegram import send_text_alert as _alert
+    _now = _now_ist()
+    if _now.weekday() < 5:  # Mon–Fri only
+        _valid = await validate_token()
+        if not _valid:
+            logger.warning("Startup: Upstox token missing or expired")
+            asyncio.create_task(_alert(
+                "*⚠️ Chanakya Sanket Started — No Valid Token*\n\n"
+                "Running in mock mode\\.\n"
+                "To switch to live: `http://localhost:8000/auth/login`"
+            ))
+
     if settings.upstox_access_token:
         logger.info("Live mode — seeding candles from Upstox history")
         from app.market_data.historical import fetch_historical_candles
@@ -99,7 +114,7 @@ async def upstox_callback(code: str):
             <h2>Chanakya Sanket</h2>
             <p style="color:#4ade80;font-size:18px;">Connected to Upstox successfully.</p>
             <p>WebSocket feed starting. Signal engine is now switching to live data.</p>
-            <p style="color:#aaa;font-size:14px;">Restart the server tomorrow morning to ensure clean startup in live mode.</p>
+            <p style="color:#aaa;font-size:14px;">Token saved. WebSocket feed is starting. You can close this tab.</p>
             </body></html>
         """)
     except Exception as e:
@@ -412,7 +427,16 @@ async def trigger_evaluate_signals(ticks: int = 1):
     return {"ticks_simulated": ticks, "resolved": resolved}
 
 
-async def _simulate_one_day(sim_date, session, count: int = 10, notify: bool = True):
+async def _simulate_one_day(
+    sim_date, session, count: int = 10, notify: bool = True,
+    min_confidence: int | None = None,
+    points_vwap: int | None = None,
+    points_rsi: int | None = None,
+    points_oi: int | None = None,
+    points_orb: int | None = None,
+    target_multiplier: float | None = None,
+    sl_multiplier: float | None = None,
+):
     """
     Core simulate logic for a single trading date.
     Slides through 5m candles, runs strategies, evaluates outcomes against rest of day.
@@ -431,10 +455,14 @@ async def _simulate_one_day(sim_date, session, count: int = 10, notify: bool = T
 
     results = []
     MIN_CANDLES = 50
+    MAX_DAILY_LOSSES = 3  # Mirror of scheduler.py circuit breaker
+    daily_sl_count = 0    # Global SL counter across both symbols for this day
 
     for symbol in ["NIFTY", "BANKNIFTY"]:
         if len(results) >= count:
             break
+        if daily_sl_count >= MAX_DAILY_LOSSES:
+            break  # Circuit breaker: wipeout day — stop all symbols
 
         candles_full = await fetch_historical_candles(symbol, sim_date)
         if candles_full.empty or len(candles_full) < MIN_CANDLES:
@@ -443,6 +471,8 @@ async def _simulate_one_day(sim_date, session, count: int = 10, notify: bool = T
         for window_end in range(MIN_CANDLES, len(candles_full) + 1):
             if len(results) >= count:
                 break
+            if daily_sl_count >= MAX_DAILY_LOSSES:
+                break  # Circuit breaker tripped mid-symbol
 
             window = candles_full.iloc[:window_end].copy()
             spot_price = float(window["close"].iloc[-1])
@@ -464,6 +494,13 @@ async def _simulate_one_day(sim_date, session, count: int = 10, notify: bool = T
                 session=session,
                 force=True,
                 source="historical",
+                min_confidence=min_confidence,
+                points_vwap=points_vwap,
+                points_rsi=points_rsi,
+                points_oi=points_oi,
+                points_orb=points_orb,
+                target_multiplier=target_multiplier,
+                sl_multiplier=sl_multiplier,
             )
 
             if signal:
@@ -491,6 +528,9 @@ async def _simulate_one_day(sim_date, session, count: int = 10, notify: bool = T
                         elif close >= signal.stop_loss:
                             outcome_state, outcome_price, outcome_candle = "SL_HIT", close, str(fc.timestamp)
                             break
+
+                if outcome_state == "SL_HIT":
+                    daily_sl_count += 1
 
                 await _close_signal(signal, SignalState(outcome_state), outcome_price, session)
                 await session.commit()
@@ -549,14 +589,28 @@ async def trigger_simulate(date: str = None, count: int = 10):
 
 
 @app.post("/trigger/backfill")
-async def trigger_backfill(weeks: int = 6, signals_per_day: int = 5):
+async def trigger_backfill(
+    weeks: int = 6,
+    signals_per_day: int = 10,
+    min_confidence: int | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    points_vwap: int | None = None,
+    points_rsi: int | None = None,
+    points_oi: int | None = None,
+    points_orb: int | None = None,
+    target_multiplier: float | None = None,
+    sl_multiplier: float | None = None,
+):
     """
-    Replay the past `weeks` weeks of real trading days to build historical signal data.
+    Replay real trading days to build historical signal data.
     Runs simulate on every trading day, evaluates outcomes, saves to DB.
     Sends ONE Telegram summary at the end (no per-signal alerts).
 
-    weeks: how many weeks back to go (default 6)
+    weeks: how many weeks back from today (default 6, ignored if start_date given)
+    start_date / end_date: explicit YYYY-MM-DD range (overrides weeks)
     signals_per_day: max signals per day per run (default 5)
+    min_confidence: override confidence threshold for this run (default: uses .env)
     """
     from datetime import date as date_type, timedelta
     from app.utils.market_hours import now_ist
@@ -566,18 +620,24 @@ async def trigger_backfill(weeks: int = 6, signals_per_day: int = 5):
         return {"error": "Live mode required. Set UPSTOX_ACCESS_TOKEN in .env"}
 
     today = now_ist().date()
-    start_date = today - timedelta(weeks=weeks)
+
+    if start_date:
+        range_start = date_type.fromisoformat(start_date)
+        range_end = date_type.fromisoformat(end_date) if end_date else today
+    else:
+        range_start = today - timedelta(weeks=weeks)
+        range_end = today
 
     # Build list of weekdays (Mon-Fri) in range — weekends and holidays auto-skipped
     # (Upstox returns empty data for holidays, _simulate_one_day handles gracefully)
     all_dates = []
-    d = start_date
-    while d < today:
+    d = range_start
+    while d < range_end:
         if d.weekday() < 5:  # Mon=0 … Fri=4
             all_dates.append(d)
         d += timedelta(days=1)
 
-    logger.info("Starting backfill", weeks=weeks, trading_days=len(all_dates))
+    logger.info("Starting backfill", start=str(range_start), end=str(range_end), trading_days=len(all_dates))
 
     day_results = []
     total_signals = total_wins = total_losses = total_expired = 0
@@ -585,7 +645,12 @@ async def trigger_backfill(weeks: int = 6, signals_per_day: int = 5):
     async with AsyncSessionLocal() as session:
         for sim_date in all_dates:
             signals = await _simulate_one_day(
-                sim_date, session, count=signals_per_day, notify=False
+                sim_date, session, count=signals_per_day, notify=False,
+                min_confidence=min_confidence,
+                points_vwap=points_vwap, points_rsi=points_rsi,
+                points_oi=points_oi, points_orb=points_orb,
+                target_multiplier=target_multiplier,
+                sl_multiplier=sl_multiplier,
             )
             wins = sum(1 for s in signals if s["outcome"] == "TARGET_HIT")
             losses = sum(1 for s in signals if s["outcome"] == "SL_HIT")
