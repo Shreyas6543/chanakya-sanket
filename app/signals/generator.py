@@ -6,7 +6,6 @@ from app.config import get_settings
 from app.db.models import Signal, SignalDirection, MarketRegime, StrategyResult
 from app.strategies.vwap_breakout import VWAPBreakoutStrategy
 from app.strategies.rsi_momentum import RSIMomentumStrategy
-from app.strategies.bullish_engulfing import BullishEngulfingStrategy
 from app.strategies.opening_range import OpeningRangeBreakoutStrategy
 from app.strategies.oi_buildup import OIBuildupStrategy
 from app.signals.confidence import calculate_confidence
@@ -18,10 +17,10 @@ from app.utils.market_hours import can_generate_signals
 logger = structlog.get_logger()
 settings = get_settings()
 
+# BullishEngulfing removed — backtested 14.3% win rate vs 33.3% break-even (6-week data)
 STRATEGIES = [
     VWAPBreakoutStrategy(),
     RSIMomentumStrategy(),
-    BullishEngulfingStrategy(),
     OpeningRangeBreakoutStrategy(),
     OIBuildupStrategy(),
 ]
