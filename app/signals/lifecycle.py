@@ -23,10 +23,16 @@ async def evaluate_signal_tick(
 
     new_state = None
 
-    if current_price >= signal.target:
-        new_state = SignalState.TARGET_HIT
-    elif current_price <= signal.stop_loss:
-        new_state = SignalState.SL_HIT
+    if signal.direction.value == "CALL":
+        if current_price >= signal.target:
+            new_state = SignalState.TARGET_HIT
+        elif current_price <= signal.stop_loss:
+            new_state = SignalState.SL_HIT
+    else:  # PUT — target is below entry, stop_loss is above entry
+        if current_price <= signal.target:
+            new_state = SignalState.TARGET_HIT
+        elif current_price >= signal.stop_loss:
+            new_state = SignalState.SL_HIT
 
     if new_state:
         await _close_signal(signal, new_state, current_price, session)
