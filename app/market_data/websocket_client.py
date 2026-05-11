@@ -1,5 +1,7 @@
 import asyncio
 import json
+import ssl
+import certifi
 import structlog
 import websockets
 from datetime import datetime
@@ -45,11 +47,13 @@ class UpstoxWebSocketClient:
             "Api-Version": "2.0",
         }
 
+        ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+
         self._running = True
         while self._running:
             try:
                 logger.info("Connecting to Upstox WebSocket...")
-                async with websockets.connect(UPSTOX_WS_URL, additional_headers=headers) as ws:
+                async with websockets.connect(UPSTOX_WS_URL, extra_headers=headers, ssl=ssl_ctx) as ws:
                     self._ws = ws
                     await self._subscribe(ws)
                     logger.info("Upstox WebSocket connected", instruments=settings.instrument_list)
