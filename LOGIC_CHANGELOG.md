@@ -146,3 +146,19 @@
 - **Why**: Backtest showed wipeout days with 5 consecutive losses. Capping at 3 saves ~2 bad trades on the worst days.
 - **Result**: Wipeout days capped. Marginal WR improvement (34.4% → 37.7% in backtested 6-week window).
 - **Status**: KEPT
+
+---
+
+### [2026-05-12] Zerodha Varsity batch improvements — cumulative backtest result
+- **What changed**: CPR regime detection + direction-aware OTM strike fix + expiry_min_days 2→3 + RSI stuck overbought/oversold (all in one commit)
+- **Why**: Applied from reading Zerodha Varsity modules (Technical Analysis, Options Theory, Risk Management)
+- **Result**: Full re-backtest on 267 trading days (May 2025 – May 2026), min_confidence=25: **564 signals, 42.6% WR** (was 36.5% price-action baseline). +6.1pp improvement.
+- **Status**: KEPT
+
+---
+
+### [2026-05-12] Starlette downgrade to 0.37.2 (infra fix)
+- **What changed**: `starlette` downgraded from 1.0.0 (claude-agent-sdk bumped it) back to 0.37.2 (FastAPI 0.111 requires ~0.37)
+- **Why**: claude-agent-sdk install silently upgraded Starlette, breaking FastAPI's Router init
+- **Result**: FastAPI works again; backfill script imports correctly
+- **Status**: KEPT
