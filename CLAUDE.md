@@ -169,10 +169,12 @@ GET  /signals                         List recent signals (limit, state filters)
 GET  /signals/open                    All currently OPEN signals
 GET  /signals/daily-report            Daily report (date, include_mock params)
 GET  /analytics                       Overall + by_reason + by_regime stats
-POST /trigger/signal-engine           Manual trigger (force=true bypasses market hours)
+POST /trigger/signal-engine           Manual trigger (force=true bypasses market hours, uses mock data)
 POST /trigger/evaluate-signals        Evaluate open signals (ticks=60 fast-forward)
 POST /trigger/test-signal             Send test Telegram alert
-GET  /debug/strategies/{symbol}       Debug all strategies on current candle data
+GET  /debug/strategies/{symbol}       ⚠️ OVERWRITES buffer with mock candles — do NOT call in live session
+GET  /debug/real-strategies/{symbol}  Evaluate strategies on real candle buffer (safe to call anytime)
+GET  /debug/live-prices               Show current LIVE_PRICES dict from WebSocket
 ```
 
 ---
@@ -284,6 +286,7 @@ Score is normalized to 0-100 as `raw_score / max_possible × 100`. Max possible 
 - NSE index instruments (NIFTY/BANKNIFTY) have zero volume in Upstox — volume checks are bypassed
 - `rsi_crossed_above` uses lookback=5 (25 min window) so RSI cross aligns with later VWAP breakout
 - On a sell-off day (market opens high, falls) ORB fires PUT; on breakout days all 3 CALL strategies align
+- **Strategies fire on crossover moment only** — `vwap_breakout/breakdown` and `rsi_crossed_above/below` detect the single candle where the cross happens. If price is already below VWAP at server start, no PUT signal fires until a fresh cross. On days with a gap-down open or early breakdown, signals may fire at 9:20–9:30 AM only; no further signals until a new crossover.
 
 ---
 
@@ -398,18 +401,23 @@ OPEN → TARGET_HIT  (price >= target)
 Before 9:15 IST:
   cd /Users/shrego-persnol/Documents/fintech/trading-engine
   make dev
+  Open http://localhost:8000/auth/login in browser → re-authenticate Upstox
 
 During market hours:
   Watch Telegram for signal alerts.
   Paper trade manually.
+  ⚠️ DO NOT restart the server mid-session — restarts wipe the in-memory tick buffer
+     for the current candle (the one currently building). Completed candles are safe
+     in DB, but the partial candle since the last 5-min boundary is lost.
 
 After market close:
   make report                   # today's live signals + outcomes
   make analytics                # cumulative win rate
   Ctrl+C to stop server
 
-Note: Upstox token expires daily at midnight.
-Re-authenticate every morning: open http://localhost:8000/auth/login in browser.
+Note: Upstox token validity: observed to survive overnight as of May 2026 (may be
+longer-lived than advertised). The 8:45 AM token_check_job sends a Telegram alert
+if expired. Re-authenticate via http://localhost:8000/auth/login.
 ```
 
 ---
@@ -463,6 +471,8 @@ Re-authenticate every morning: open http://localhost:8000/auth/login in browser.
 2. **December seasonal pattern** — Dec historically shows ~20% WR (well below break-even). Year-end thin liquidity, FII rebalancing. Consider skipping December or halving position size.
 3. **OI signal quality unknown** — Backfill uses no OI. First real test of OI strategy quality is live trading with Upstox intraday options chain. Watch `by_strategy_combo` analytics once 50+ live signals accumulate.
 4. **signal_context hour/minute null in backfill** — Historical candles use RangeIndex; timestamp extracted from column. Works correctly for live WebSocket candles (DatetimeIndex).
+5. **`/debug/strategies/{symbol}` overwrites live candle buffer** — This endpoint calls `generate_mock_candles()` which replaces real data. Never call it during market hours. Use `/debug/real-strategies/{symbol}` instead.
+6. **Partial candle lost on restart** — The candle currently being built from live ticks (not yet closed) is lost on server restart. Completed candles are safe in DB. Impact: ≤5 minutes of tick data lost.
 
 ---
 
