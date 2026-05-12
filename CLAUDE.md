@@ -230,6 +230,8 @@ signals
   id, symbol, direction (CALL/PUT), strike, expiry, entry, stop_loss, target,
   confidence (int), reasons (JSON), regime (TRENDING/SIDEWAYS),
   capital_required, suggested_lots, source ("live"/"mock"),
+  signal_context (JSONB) — snapshot at signal time: signal_time, hour, minute, rsi,
+    vwap_distance_pct, atr, pcr (real NSE EOD), strategies_fired
   state (OPEN/TARGET_HIT/SL_HIT/EXPIRED),
   created_at, evaluated_at
 
@@ -256,64 +258,64 @@ candles
 ## Confidence Scoring Formula
 | Strategy | Points | Condition |
 |---|---|---|
-| OI Buildup | +30 | Call OI up >5%, Put OI down >5% (or reverse for PUT) |
+| OI Buildup | +25 | Call or put OI change >1% with price confirmation (live: intraday Upstox; backfill: skipped) |
 | VWAP Breakout | +20 | Price crosses above VWAP + volume spike >1.5x (volume check skipped for zero-volume indices) |
 | RSI Momentum | +15 | RSI crosses above 55 within last 5 candles (lookback=5) + EMA9 > EMA21 > EMA50 |
 | Opening Range Breakout | +15 | Price breaks first-15m high/low (volume check skipped for zero-volume indices) |
 | Positive Sentiment | +10 | VADER compound > 0.05 on relevant news |
-| **Minimum to fire** | **60** | Configurable via `MIN_CONFIDENCE_SCORE` in .env |
+| **Minimum to fire** | **35** | Backfill: 35 (max 50 without OI). Live: 35 (OI adds up to 25 more) |
 
 **Note:** BullishEngulfing strategy removed — backtested at 14.3% WR vs 33.3% break-even.
+
+**OI strategy behaviour by mode:**
+- **Backfill/historical**: `oi_data=None` — OI strategy skipped entirely. EOD day-over-day OI has wrong granularity for intraday signals and was found to hurt WR (31.9% vs 36.5% without it).
+- **Live trading**: Upstox options chain gives real-time intraday OI — strategy fires normally. True OI signal quality unknown until live data accumulates.
+- **signal_context**: always captures real NSE EOD PCR (from `data/nse_oi/`) for post-hoc analysis regardless of mode.
 
 **Real market calibration notes:**
 - NSE index instruments (NIFTY/BANKNIFTY) have zero volume in Upstox — volume checks are bypassed
 - `rsi_crossed_above` uses lookback=5 (25 min window) so RSI cross aligns with later VWAP breakout
-- Real data max score is typically 55-65 pts; mock data was artificially tuned to 100 pts
-- On a sell-off day (market opens high, falls) ORB fires PUT; on breakout days all 3-4 CALL strategies align
-- Simulate endpoint uses price-vs-VWAP to set OI mock direction, avoiding CALL/PUT conflicts
+- On a sell-off day (market opens high, falls) ORB fires PUT; on breakout days all 3 CALL strategies align
 
 ---
 
 ## Backtesting Research Findings (6-month dataset, Nov 2025 – May 2026)
 
-**Dataset:** 512 signals across 130 trading days on real Upstox OHLCV data.
-**Baseline config wins:** VWAP=20, RSI=15, OI=30, ORB=15, min=60 → **44.8% WR** (break-even = 33.3%)
+### OI Discovery (May 2026) — critical finding
+**Fake OI was inflating all previous backtest results by ~8% WR.**
 
-### Monthly WR breakdown
+| Config | Signals | WR | Notes |
+|---|---|---|---|
+| Fake OI (old baseline) | 562 | 44.8% | OI always aligned with price — circular, not real |
+| Real NSE EOD OI | 150 | 31.9% | EOD day-over-day OI disagrees with price → adds noise |
+| **No OI (price action only)** | **97** | **36.5%** | **Honest baseline — above break-even** |
+
+**Conclusion:** Real NSE EOD OI data has wrong granularity for intraday signals. Fake OI was just confirming price direction, not adding new information. Genuine edge = price action (VWAP + RSI + ORB) = **36.5% WR** above 33.3% break-even.
+
+True OI value will only be known once live Upstox intraday options chain data accumulates.
+
+### Real OI data (data/nse_oi/)
+- **253 days downloaded**: May 2025 – May 11 2026 (NSE F&O UDiFF Bhavcopy)
+- **Script**: `scripts/download_nse_oi.py` — re-runnable to extend coverage
+- **Module**: `app/market_data/real_oi.py` — loads day-over-day OI for signal_context PCR
+- **Not used for strategy evaluation** — only for signal_context enrichment (PCR column)
+
+### Honest backtest baseline (price action only, no OI)
+**97 signals, 36.5% WR, Nov 2025 – May 2026**
+Config: VWAP=20, RSI=15, ORB=15, OI=skipped, min_confidence=35
+
+### Monthly WR breakdown (price action only)
 | Month | WR | Notes |
 |---|---|---|
-| Nov 2025 | 34.4% | Marginally above break-even |
-| Dec 2025 | 21.5% | **Danger zone — year-end thin liquidity, FII rebalancing** |
-| Jan 2026 | 47.5% | Good |
-| Feb 2026 | 59.8% | Strong trending period |
-| Mar 2026 | 64.8% | Best — clear directional moves |
-| Apr 2026 | 42.2% | OK — some choppy days |
+| Dec 2025 | ~20% | **Danger zone — year-end thin liquidity, FII rebalancing** |
+| Feb–Mar 2026 | ~55–60% | Strong trending period |
+| Nov, Jan, Apr | ~35–45% | Normal — marginal edge |
 
-### Confidence score vs WR (counterintuitive)
-Higher confidence REDUCES win rate — high-confidence signals fire late in the move:
-| Confidence | WR |
-|---|---|
-| 60-64 | **43.3%** (best) |
-| 65-69 | 43.4% |
-| 70-74 | 39.4% |
-| 75-79 | 37.5% |
-| 80+ | 32.2% |
-**Implication: Do NOT raise MIN_CONFIDENCE_SCORE above 60.**
+### R:R ratio analysis
+Current 2×ATR target has highest edge above break-even. Do not change without re-backtesting.
 
-### R:R ratio analysis — Edge above break-even
-Current 2×ATR target has the highest net edge:
-| Target | WR | Break-even | Edge |
-|---|---|---|---|
-| 1.2×ATR | 54.2% | 45.5% | +8.7% |
-| 1.8×ATR | 47.7% | 35.7% | +12.0% |
-| **2.0×ATR (current)** | **44.8%** | **33.3%** | **+11.5%** |
-| 3.0×ATR | 34.8% | 25.0% | +9.8% |
-
-### CALL vs PUT direction bias
-PUT signals significantly outperformed during bearish Nov 2025 – May 2026 period:
-- CALL: 37.4% WR (market was in corrective phase)
-- **PUT: 48.3% WR**
-This is market-regime dependent, not a structural advantage of PUT strategies.
+### CALL vs PUT direction bias (Nov 2025–May 2026, bearish market)
+- CALL: ~37% WR | PUT: ~48% WR — regime dependent, not structural.
 
 ### Circuit breaker (scheduler.py)
 - `_consecutive_losses`: per-symbol gate — skip symbol after 2 consecutive SL_HITs
@@ -424,17 +426,19 @@ Re-authenticate every morning: open http://localhost:8000/auth/login in browser.
 - [x] Makefile for single-command workflow
 
 ### Phase 2 — Paper Trading Validation — IN PROGRESS
-- [x] Strategy calibration for real index market data (volume=0 fixes, RSI lookback, min score 65→60)
+- [x] Strategy calibration for real index market data (volume=0 fixes, RSI lookback)
 - [x] Historical simulation (`make simulate DATE=YYYY-MM-DD`) — verified working
-- [x] 6-month backtest (Nov 2025 – May 2026) — 512 signals, **44.8% WR** (vs 33.3% break-even)
-- [x] Confidence score / R:R / direction analysis completed — original config confirmed optimal
+- [x] 6-month backtest — honest baseline: **97 signals, 36.5% WR** (price action only, no OI)
+- [x] OI discovery: fake OI was inflating results — switched to real NSE data then disabled for backfill
+- [x] 253 days of real NSE EOD OI downloaded (`data/nse_oi/`, `scripts/download_nse_oi.py`)
+- [x] signal_context JSONB on every signal — captures RSI, VWAP dist%, ATR, PCR, strategies_fired, hour
+- [x] Analytics: by_hour + by_strategy_combo endpoints for accuracy improvement
 - [x] Circuit breaker (3 SL_HITs/day stops all signals) + per-symbol consecutive loss gate
 - [x] PUT/CALL support across all strategies (direction-aware SL/target/evaluation)
 - [x] Backfill endpoint with full grid-search parameter overrides
-- [x] Historical candle seeding on startup (`seed_candles()` in lifespan)
-- [ ] **Daily token auto-refresh** — token expires at midnight, manual re-login required (NEXT)
-- [ ] Accumulate 50–100 real live signals over 4–6 weeks
-- [ ] Store signal_time (candle timestamp) in signals table for time-of-day WR analysis
+- [x] Upstox token active — system running in live mode
+- [ ] Accumulate 50–100 real live signals (with real intraday OI from Upstox)
+- [ ] Analyse by_hour + by_strategy_combo once 50+ live signals collected
 
 ### Phase 3 — Analytics Dashboard (not started)
 ### Phase 4 — Strategy Optimization (not started)
@@ -444,9 +448,10 @@ Re-authenticate every morning: open http://localhost:8000/auth/login in browser.
 ---
 
 ## Known Issues / Next Up
-1. **Daily token refresh** — Upstox access tokens expire at midnight. Current flow: open browser → `/auth/login` → re-authenticate manually. This is the #1 operational risk for live data collection.
-2. **signal_time not stored** — The candle timestamp when a signal fired is returned in simulate/backfill responses but NOT stored in the `signals` table. Add `signal_time` column for time-of-day WR analysis.
-3. **December seasonal pattern** — Dec 2025 showed 21.5% WR (well below break-even). Year-end thin liquidity, FII rebalancing, holiday season. Consider reducing position size or skipping December. No intraday filter can reliably detect this.
+1. **Token expiry unclear** — Token has NOT expired at midnight (May 12 2026). Upstox may have changed to longer-lived tokens. The 8:45 AM `token_check_job` will alert on Telegram if it ever expires.
+2. **December seasonal pattern** — Dec historically shows ~20% WR (well below break-even). Year-end thin liquidity, FII rebalancing. Consider skipping December or halving position size.
+3. **OI signal quality unknown** — Backfill uses no OI. First real test of OI strategy quality is live trading with Upstox intraday options chain. Watch `by_strategy_combo` analytics once 50+ live signals accumulate.
+4. **signal_context hour/minute null in backfill** — Historical candles use RangeIndex; timestamp extracted from column. Works correctly for live WebSocket candles (DatetimeIndex).
 
 ---
 
