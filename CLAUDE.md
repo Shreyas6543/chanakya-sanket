@@ -77,6 +77,31 @@ An explainable, rule-based intraday options trading intelligence engine for Indi
 
 ---
 
+## Original Specification Documents
+All original design docs are at `/Users/shrego-persnol/Documents/fintech/docs/`. Read these for full product vision, business context, and roadmap intent before making any major architectural decisions.
+
+```
+docs/
+├── AI_Trading_Intelligence_System_Roadmap.docx   # Full 6-phase roadmap + business model
+├── Trading_AI_Execution_Blueprint.docx           # Technical execution plan
+├── Trading_AI_Pitch_Deck.docx                    # Product pitch + market positioning
+├── Trading_AI_Starter_Logics.docx                # Initial strategy logic ideas
+├── iteration-1/
+│   ├── UPDATED_Claude_Build_Instructions.docx    # Phase 1 build instructions (implemented)
+│   └── UPDATED_Master_Trading_Roadmap.docx       # Updated roadmap after iteration 1
+└── iteration-2/
+    ├── FINAL_Claude_Build_Spec.docx              # Final build spec (current codebase basis)
+    └── FINAL_Updated_Execution_Roadmap.docx      # Most current roadmap — read this first
+```
+
+**Priority reading order for a new agent:**
+1. `iteration-2/FINAL_Updated_Execution_Roadmap.docx` — current roadmap, what's next
+2. `iteration-2/FINAL_Claude_Build_Spec.docx` — full technical spec this codebase is built from
+3. `iteration-1/UPDATED_Master_Trading_Roadmap.docx` — context on earlier decisions
+4. `AI_Trading_Intelligence_System_Roadmap.docx` — original vision (some superseded by iteration-2)
+
+---
+
 ## Local Setup & Prerequisites
 - macOS (Darwin 25.4.0)
 - Python 3.12 at `/usr/local/bin/python3`
