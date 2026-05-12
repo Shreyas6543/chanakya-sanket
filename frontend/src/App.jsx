@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import ClaudePanel from './components/ClaudePanel'
 
 const API = ''  // proxied to :8000 via vite.config.js
@@ -128,6 +128,44 @@ export default function App() {
 
   const ov = data?.overview
 
+  // Compute by_hour and by_strategy_combo client-side from loaded signals
+  // so they respect the current date + strategy filters
+  const STRAT_ABBR = {
+    vwap_breakout: 'VWAP', rsi_momentum: 'RSI',
+    opening_range_breakout: 'ORB', oi_buildup: 'OI',
+  }
+  const abbr = (s) => STRAT_ABBR[s] || s
+
+  const byHour = useMemo(() => {
+    const map = {}
+    for (const s of signals) {
+      const h = s.hour
+      if (h == null) continue
+      if (!map[h]) map[h] = { hour: h, total: 0, wins: 0 }
+      map[h].total++
+      if (s.outcome === 'TARGET_HIT') map[h].wins++
+    }
+    return Object.values(map)
+      .map(r => ({ ...r, win_rate: r.total ? Math.round(r.wins / r.total * 100) : 0 }))
+      .sort((a, b) => a.hour - b.hour)
+  }, [signals])
+
+  const byCombo = useMemo(() => {
+    const map = {}
+    for (const s of signals) {
+      const fired = s.strategies_fired
+      if (!fired || fired.length === 0) continue
+      const key = [...fired].sort().join('+')
+      if (!map[key]) map[key] = { combo: key, total: 0, wins: 0 }
+      map[key].total++
+      if (s.outcome === 'TARGET_HIT') map[key].wins++
+    }
+    return Object.values(map)
+      .map(r => ({ ...r, win_rate: r.total ? Math.round(r.wins / r.total * 100) : 0 }))
+      .filter(r => r.total >= 3)
+      .sort((a, b) => b.total - a.total)
+  }, [signals])
+
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100 p-6 max-w-screen-2xl mx-auto">
 
@@ -255,6 +293,72 @@ export default function App() {
               ))}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* By Hour + By Strategy Combo */}
+      {data && (byHour.length > 0 || byCombo.length > 0) && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+
+          {/* By Hour */}
+          <div className="bg-gray-900 rounded-xl p-4">
+            <h3 className="text-sm font-semibold text-gray-400 mb-1">Win Rate by Hour</h3>
+            <p className="text-xs text-gray-600 mb-3">Which time window generates the best signals</p>
+            {byHour.length === 0 ? (
+              <p className="text-xs text-gray-600">No hour data — signals need signal_context.hour</p>
+            ) : (
+              <div className="space-y-2">
+                {byHour.map(r => {
+                  const color = r.win_rate >= 40 ? 'bg-green-500'
+                    : r.win_rate >= 33 ? 'bg-yellow-500' : 'bg-red-500'
+                  return (
+                    <div key={r.hour} className="flex items-center gap-3">
+                      <span className="w-12 text-xs text-gray-400 font-mono">{String(r.hour).padStart(2,'0')}:00</span>
+                      <div className="flex-1 bg-gray-800 rounded-full h-2 overflow-hidden">
+                        <div className={`h-2 rounded-full ${color}`} style={{ width: `${r.win_rate}%` }} />
+                      </div>
+                      <span className={`text-sm font-medium w-12 text-right ${
+                        r.win_rate >= 40 ? 'text-green-400' : r.win_rate >= 33 ? 'text-yellow-400' : 'text-red-400'
+                      }`}>{r.win_rate}%</span>
+                      <span className="text-xs text-gray-600 w-16 text-right">{r.wins}/{r.total} signals</span>
+                    </div>
+                  )
+                })}
+                <p className="text-xs text-gray-700 pt-1">Green ≥40% · Yellow ≥33% (break-even) · Red below</p>
+              </div>
+            )}
+          </div>
+
+          {/* By Strategy Combo */}
+          <div className="bg-gray-900 rounded-xl p-4">
+            <h3 className="text-sm font-semibold text-gray-400 mb-1">Win Rate by Strategy Combo</h3>
+            <p className="text-xs text-gray-600 mb-3">Which combinations of strategies actually win (min 3 signals)</p>
+            {byCombo.length === 0 ? (
+              <p className="text-xs text-gray-600">Not enough data yet — need 3+ signals per combo</p>
+            ) : (
+              <div className="space-y-2">
+                {byCombo.map(r => {
+                  const label = r.combo.split('+').map(abbr).join(' + ')
+                  const color = r.win_rate >= 40 ? 'bg-green-500'
+                    : r.win_rate >= 33 ? 'bg-yellow-500' : 'bg-red-500'
+                  return (
+                    <div key={r.combo} className="flex items-center gap-3">
+                      <span className="w-36 text-xs text-gray-300 truncate" title={label}>{label}</span>
+                      <div className="flex-1 bg-gray-800 rounded-full h-2 overflow-hidden">
+                        <div className={`h-2 rounded-full ${color}`} style={{ width: `${r.win_rate}%` }} />
+                      </div>
+                      <span className={`text-sm font-medium w-12 text-right ${
+                        r.win_rate >= 40 ? 'text-green-400' : r.win_rate >= 33 ? 'text-yellow-400' : 'text-red-400'
+                      }`}>{r.win_rate}%</span>
+                      <span className="text-xs text-gray-600 w-16 text-right">{r.wins}/{r.total} signals</span>
+                    </div>
+                  )
+                })}
+                <p className="text-xs text-gray-700 pt-1">Green ≥40% · Yellow ≥33% (break-even) · Red below</p>
+              </div>
+            )}
+          </div>
+
         </div>
       )}
 
