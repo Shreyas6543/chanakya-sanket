@@ -95,6 +95,7 @@ Ctrl+C                            # Stop the server
 | GET | `/signals` | Recent signals (add `?limit=50&state=OPEN`) |
 | GET | `/signals/open` | All currently open signals |
 | GET | `/signals/daily-report` | Today's report (add `?date=2026-05-11` for specific date) |
+| POST | `/signals/{id}/mark-sold` | Mark an open signal as USER_CLOSED (manually squared off) |
 
 ### Analytics
 | Method | Endpoint | Description |
@@ -151,6 +152,18 @@ Upstox WebSocket → 5-min candle → Strategies → Confidence Score → Signal
 - 3 total SL hits across all symbols → all signals paused for the day
 - Both reset at 9:15 AM
 
+**Signal lifecycle:**
+```
+OPEN → TARGET_HIT   (price >= target)
+     → SL_HIT       (price <= stop_loss)
+     → EXPIRED      (auto at 3:30 PM if still open)
+     → USER_CLOSED  (user tapped "Mark as Sold" on Telegram)
+```
+EXPIRED and USER_CLOSED both count as losses in the win rate denominator — they represent real theta decay / forced exits, not neutral events.
+
+**Near-expiry alerts (live mode, 3:10 PM + 3:20 PM):**
+Telegram sends a warning for every open signal with current unrealized P&L and a **✅ Mark as Sold** inline button. Tap it → signal moves to USER_CLOSED and alerts stop. If you don't tap, it auto-expires at 3:30 PM.
+
 ---
 
 ## Strike & Expiry Selection
@@ -205,6 +218,8 @@ While running in live mode, OI snapshots (call_oi, put_oi) are automatically sav
 | Real NSE EOD OI | 150 | 31.9% | EOD granularity wrong for intraday |
 | Price action only (baseline) | 97 | 36.5% | Honest, above 33.3% break-even |
 | + Zerodha improvements | 564 | **42.6%** | CPR regime + RSI continuation + strike fix |
+
+> **Note on win rate calculation:** EXPIRED and USER_CLOSED signals count as losses in the denominator (`resolved = wins + losses + expired`). Options held to EOD always incur theta decay — they are not neutral events.
 
 **Monthly pattern:** Dec historically ~20% WR (thin liquidity). Feb–Mar best at 55–60%.
 

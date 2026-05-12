@@ -165,6 +165,20 @@
 
 ---
 
+### [2026-05-12] Near-expiry alerts + USER_CLOSED state + honest win rate
+
+- **What changed**:
+  - `SignalState` enum: added `USER_CLOSED` — signals user manually squared off before EOD
+  - `database.py`: `ALTER TYPE signalstate ADD VALUE IF NOT EXISTS 'USER_CLOSED'` (runs in AUTOCOMMIT outside transaction)
+  - `telegram.py`: `send_squareoff_alert()` — per-signal warning with live unrealized P&L estimate + inline "✅ Mark as Sold" button
+  - `scheduler.py`: two new jobs — `squareoff_warning_job(20)` at 3:10 PM, `squareoff_warning_job(10)` at 3:20 PM (live mode only). `telegram_polling_job` every 10s polls Telegram callback queries, marks signal `USER_CLOSED` when button tapped.
+  - `main.py`: `POST /signals/{id}/mark-sold` endpoint. Analytics: `resolved = wins + losses + expired` — EXPIRED and USER_CLOSED now included in WR denominator.
+- **Why**: In reality EXPIRED signals = theta decay = real loss. Excluding them from WR was overstating performance. "Mark as Sold" button lets user ack each signal before EOD so system tracks that they actually exited.
+- **Result**: WR denominator is now honest. Near-expiry alerts give 20-min and 10-min warnings so user never misses a square-off.
+- **Status**: KEPT — do NOT revert to `resolved = wins + losses` (that was the overstated baseline)
+
+---
+
 ### [2026-05-12] Starlette downgrade to 0.37.2 (infra fix)
 - **What changed**: `starlette` downgraded from 1.0.0 (claude-agent-sdk bumped it) back to 0.37.2 (FastAPI 0.111 requires ~0.37)
 - **Why**: claude-agent-sdk install silently upgraded Starlette, breaking FastAPI's Router init
