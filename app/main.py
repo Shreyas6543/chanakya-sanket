@@ -47,13 +47,25 @@ async def lifespan(app: FastAPI):
         from app.market_data.historical import fetch_historical_candles
         from app.market_data.candle_processor import seed_candles
         from app.utils.market_hours import now_ist
+        from datetime import timedelta
         today = now_ist().date()
         for symbol in ["NIFTY", "BANKNIFTY"]:
-            df = await fetch_historical_candles(symbol, today)
-            if not df.empty:
-                seed_candles(symbol, df)
+            # Seed previous trading days first (up to 3 days back) to build history,
+            # then today — ensures 20+ candles available from the first signal run.
+            all_candles = []
+            for days_back in [3, 2, 1, 0]:
+                d = today - timedelta(days=days_back)
+                if d.weekday() >= 5:  # skip weekends
+                    continue
+                df = await fetch_historical_candles(symbol, d)
+                if not df.empty:
+                    all_candles.append(df)
+            if all_candles:
+                import pandas as pd
+                combined = pd.concat(all_candles, ignore_index=True)
+                seed_candles(symbol, combined)
             else:
-                logger.warning("No historical candles for today — buffer empty", symbol=symbol)
+                logger.warning("No historical candles found — buffer empty", symbol=symbol)
         logger.info("Starting Upstox WebSocket feed")
         asyncio.create_task(ws_client.connect())
     else:
