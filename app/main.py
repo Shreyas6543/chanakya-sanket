@@ -337,6 +337,8 @@ async def daily_report(date: str = None, include_mock: bool = False):
             open_count += 1
         elif state == "EXPIRED":
             expired += 1
+        elif state == "USER_CLOSED":
+            expired += 1  # Treat same as expired for reporting
 
         if pnl:
             total_pnl += pnl
@@ -359,7 +361,8 @@ async def daily_report(date: str = None, include_mock: bool = False):
             "pnl": pnl,
         })
 
-    resolved = wins + losses
+    # EXPIRED / USER_CLOSED = real losses (theta decay + forced exit). Include in denominator.
+    resolved = wins + losses + expired
     return {
         "date": str(report_date),
         "total_signals": len(signals_out),
@@ -400,11 +403,13 @@ async def api_dashboard(
     Returns overview stats + signal list filtered by date range and strategies fired.
     strategies='' or omitted → all signals. Otherwise only signals where ANY of those strategies fired.
     """
-    from datetime import date as date_type, datetime, timezone
+    from datetime import date as date_type, datetime, timezone, timedelta
     from app.db.models import SignalOutcome, StrategyResult
     from sqlalchemy import and_, text as sa_text
 
     strategy_list = [s.strip() for s in strategies.split(",")] if strategies else []
+
+    IST = timezone(timedelta(hours=5, minutes=30))
 
     async with AsyncSessionLocal() as session:
         # Base query: signals joined with outcomes
@@ -415,15 +420,24 @@ async def api_dashboard(
 
         # Date filter on signal_context->>'signal_time' (the actual trading date),
         # NOT created_at (which reflects when the backfill script ran — always today).
+        # Pass datetime objects (not strings) so asyncpg sends TIMESTAMPTZ, not VARCHAR.
         if start_date:
+            try:
+                d_start = datetime.fromisoformat(f"{start_date}T00:00:00").replace(tzinfo=IST)
+            except ValueError:
+                return {"error": f"Invalid start_date: {start_date}"}
             q = q.where(
                 sa_text("(signal_context->>'signal_time')::timestamptz >= :start")
-                .bindparams(start=f"{start_date}T00:00:00+05:30")
+                .bindparams(start=d_start)
             )
         if end_date:
+            try:
+                d_end = datetime.fromisoformat(f"{end_date}T23:59:59").replace(tzinfo=IST)
+            except ValueError:
+                return {"error": f"Invalid end_date: {end_date}"}
             q = q.where(
                 sa_text("(signal_context->>'signal_time')::timestamptz <= :end")
-                .bindparams(end=f"{end_date}T23:59:59+05:30")
+                .bindparams(end=d_end)
             )
 
         # Strategy filter: only signals where at least one selected strategy fired
@@ -461,7 +475,7 @@ async def api_dashboard(
             wins += 1
         elif result_label == "SL_HIT":
             losses += 1
-        elif state == "EXPIRED":
+        elif state in ("EXPIRED", "USER_CLOSED"):
             expired += 1
         if pnl:
             total_pnl += pnl
@@ -510,7 +524,8 @@ async def api_dashboard(
             "hour": ctx.get("hour"),
         })
 
-    resolved = wins + losses
+    # EXPIRED / USER_CLOSED = real losses (theta decay). Include in WR denominator.
+    resolved = wins + losses + expired
     overview = {
         "total_signals": total,
         "wins": wins,
@@ -552,6 +567,37 @@ async def api_dashboard(
         "by_direction": by_direction_out,
         "signals": signals_out,
     }
+
+
+# ── Signal Actions ────────────────────────────────────────────────────────────
+
+@app.post("/signals/{signal_id}/mark-sold")
+async def mark_signal_sold(signal_id: int):
+    """Mark an OPEN signal as USER_CLOSED (user manually squared off)."""
+    from app.db.models import SignalOutcome
+    from app.utils.market_hours import now_ist
+
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(Signal).where(Signal.id == signal_id))
+        signal = result.scalar_one_or_none()
+
+        if not signal:
+            return {"error": f"Signal {signal_id} not found"}
+        if signal.state != SignalState.OPEN:
+            return {"error": f"Signal is already {signal.state.value} — cannot mark sold"}
+
+        signal.state = SignalState.USER_CLOSED
+        signal.evaluated_at = now_ist()
+        outcome = SignalOutcome(
+            signal_id=signal.id,
+            result="USER_CLOSED",
+            pnl=None,
+            evaluated_at=now_ist(),
+        )
+        session.add(outcome)
+        await session.commit()
+
+    return {"ok": True, "signal_id": signal_id, "state": "USER_CLOSED"}
 
 
 # ── Admin ─────────────────────────────────────────────────────────────────────

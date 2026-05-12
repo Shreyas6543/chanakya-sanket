@@ -19,6 +19,7 @@ class SignalState(str, enum.Enum):
     TARGET_HIT = "TARGET_HIT"
     SL_HIT = "SL_HIT"
     EXPIRED = "EXPIRED"
+    USER_CLOSED = "USER_CLOSED"  # User manually squared off via Telegram button
 
 
 class MarketRegime(str, enum.Enum):

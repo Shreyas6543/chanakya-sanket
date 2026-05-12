@@ -251,6 +251,9 @@ Every signal in the DB has a `source` column:
 | news_fetcher | Every 15min | Fetch RSS feeds, cache in `_latest_news` |
 | morning_startup | 9:15 IST Mon-Fri | Clear buffers, seed candles, send "Market Open" alert |
 | eod_expire | 15:30 IST Mon-Fri | Expire all OPEN signals, clear buffers, send EOD P&L summary |
+| squareoff_warning_1 | 3:10 PM Mon-Fri | Warn about OPEN signals — live P&L + "Mark as Sold" button |
+| squareoff_warning_2 | 3:20 PM Mon-Fri | Final square-off warning (10 min to close) |
+| telegram_polling | Every 10s | Polls Telegram for inline button taps → marks signal USER_CLOSED |
 
 ---
 
@@ -395,10 +398,12 @@ Current 2×ATR target has highest edge above break-even. Do not change without r
 
 ## Signal Lifecycle
 ```
-OPEN → TARGET_HIT  (price >= target)
-     → SL_HIT      (price <= stop_loss)
-     → EXPIRED     (auto at 15:30 IST if still OPEN)
+OPEN → TARGET_HIT   (price >= target)
+     → SL_HIT       (price <= stop_loss)
+     → EXPIRED      (auto at 15:30 IST if still OPEN)
+     → USER_CLOSED  (user tapped "Mark as Sold" on Telegram inline button)
 ```
+**Win rate denominator**: wins + losses + expired + user_closed. EXPIRED/USER_CLOSED are real trades with theta decay — excluding them overstates WR.
 - Evaluator runs every minute in mock mode (always), every minute in live mode during market hours
 - P&L recorded in `signal_outcomes` on close: `(exit - entry) × lots` for CALL, reversed for PUT
 
@@ -512,6 +517,7 @@ if expired. Re-authenticate via http://localhost:8000/auth/login.
 6. Signals only generated during market hours (09:15–15:30 IST)
 7. Max 2 open signals per symbol at any time
 8. `make report` must always default to live signals only
+9. EXPIRED and USER_CLOSED both count as losses in win rate denominator — never exclude them
 
 ---
 

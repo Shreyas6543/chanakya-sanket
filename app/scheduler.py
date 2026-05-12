@@ -16,7 +16,7 @@ from app.news.fetcher import fetch_news
 from app.news.sentiment import get_symbol_sentiment
 from app.signals.generator import generate_signal
 from app.signals.lifecycle import expire_eod_signals, get_open_signal_count
-from app.alerts.telegram import send_signal_alert, send_text_alert
+from app.alerts.telegram import send_signal_alert, send_text_alert, send_squareoff_alert, answer_callback_query
 from app.analytics.engine import get_overall_stats
 from app.utils.market_hours import is_market_open, can_generate_signals
 from app.utils.oi_toggle import is_oi_enabled
@@ -31,6 +31,9 @@ USE_MOCK = not bool(settings.upstox_access_token)
 
 # Cache latest news articles
 _latest_news: list[dict] = []
+
+# Offset for Telegram getUpdates long-polling — tracks last processed update_id
+_telegram_update_offset: int = 0
 
 # Consecutive SL hits per symbol today — reset at 9:15 AM
 # If a symbol hits 2 consecutive SL_HITs, skip it for the rest of the day.
@@ -292,6 +295,105 @@ async def save_oi_snapshot_job():
         await session.commit()
 
 
+async def squareoff_warning_job(minutes_left: int):
+    """
+    Runs at 3:10 PM and 3:20 PM IST (live mode only).
+    Sends a Telegram alert for every OPEN signal showing live unrealized P&L
+    and an inline button so the user can mark it as sold.
+    """
+    if USE_MOCK:
+        return
+
+    from app.market_data.websocket_client import get_live_price
+
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Signal).where(Signal.state == SignalState.OPEN)
+        )
+        open_signals = result.scalars().all()
+
+    if not open_signals:
+        return
+
+    for signal in open_signals:
+        current_price = get_live_price(signal.symbol)
+        if not current_price:
+            continue
+        await send_squareoff_alert(signal, current_price, minutes_left)
+
+
+async def telegram_polling_job():
+    """
+    Runs every 10 seconds — polls Telegram for inline button callback queries.
+    When the user taps 'Mark as Sold' on a squareoff alert, marks the signal USER_CLOSED.
+    """
+    global _telegram_update_offset
+    import httpx
+
+    url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/getUpdates"
+
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(url, params={
+                "offset": _telegram_update_offset,
+                "timeout": 0,
+                "allowed_updates": ["callback_query"],
+            }, timeout=8)
+            data = resp.json()
+
+        if not data.get("ok"):
+            return
+
+        for update in data.get("result", []):
+            _telegram_update_offset = update["update_id"] + 1
+
+            cb = update.get("callback_query")
+            if not cb:
+                continue
+
+            callback_data = cb.get("data", "")
+            if not callback_data.startswith("sold_"):
+                continue
+
+            try:
+                signal_id = int(callback_data.split("_", 1)[1])
+            except (ValueError, IndexError):
+                continue
+
+            # Mark the signal USER_CLOSED if it is still OPEN
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(
+                    select(Signal).where(Signal.id == signal_id)
+                )
+                signal = result.scalar_one_or_none()
+
+                if signal and signal.state == SignalState.OPEN:
+                    from app.db.models import SignalOutcome
+                    from app.utils.market_hours import now_ist
+                    signal.state = SignalState.USER_CLOSED
+                    signal.evaluated_at = now_ist()
+                    outcome = SignalOutcome(
+                        signal_id=signal.id,
+                        result="USER_CLOSED",
+                        pnl=None,
+                        evaluated_at=now_ist(),
+                    )
+                    session.add(outcome)
+                    await session.commit()
+                    logger.info("Signal marked USER_CLOSED via Telegram button", signal_id=signal_id)
+                    await send_text_alert(f"✅ Signal #{signal_id} marked as sold.")
+                elif signal:
+                    await send_text_alert(
+                        f"Signal #{signal_id} is already {signal.state.value} — no change."
+                    )
+
+            # Acknowledge the button press (removes spinner in Telegram UI)
+            await answer_callback_query(cb["id"], f"Signal #{signal_id} marked as sold ✅")
+
+    except Exception as e:
+        logger.debug("Telegram polling error", error=str(e))
+
+
 def create_scheduler() -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone="Asia/Kolkata")
 
@@ -382,6 +484,32 @@ def create_scheduler() -> AsyncIOScheduler:
         ),
         id="eod_expire",
         name="EOD Signal Expiry",
+    )
+
+    # Square-off warning — 3:10 PM (20 min before close)
+    scheduler.add_job(
+        lambda: asyncio.ensure_future(squareoff_warning_job(20)),
+        CronTrigger(day_of_week="mon-fri", hour=15, minute=10, timezone="Asia/Kolkata"),
+        id="squareoff_warning_1",
+        name="Square-Off Warning (3:10 PM)",
+    )
+
+    # Square-off warning — 3:20 PM (10 min before close, final nudge)
+    scheduler.add_job(
+        lambda: asyncio.ensure_future(squareoff_warning_job(10)),
+        CronTrigger(day_of_week="mon-fri", hour=15, minute=20, timezone="Asia/Kolkata"),
+        id="squareoff_warning_2",
+        name="Square-Off Warning (3:20 PM)",
+    )
+
+    # Telegram callback polling — every 10 seconds (handles inline button taps)
+    scheduler.add_job(
+        telegram_polling_job,
+        IntervalTrigger(seconds=10),
+        id="telegram_polling",
+        name="Telegram Callback Polling",
+        max_instances=1,
+        coalesce=True,
     )
 
     # OI snapshot — every 5 minutes during market hours (live mode only)

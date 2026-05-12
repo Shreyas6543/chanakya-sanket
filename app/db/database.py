@@ -54,3 +54,10 @@ async def create_tables():
                 "ON candles (symbol, timeframe, timestamp)"
             )
         )
+
+    # ALTER TYPE must run outside a transaction block (PostgreSQL requirement)
+    from sqlalchemy import text as sa_text
+    async with engine.connect() as conn:
+        await conn.execution_options(isolation_level="AUTOCOMMIT").execute(
+            sa_text("ALTER TYPE signalstate ADD VALUE IF NOT EXISTS 'USER_CLOSED'")
+        )

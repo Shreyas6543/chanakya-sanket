@@ -75,6 +75,61 @@ async def send_signal_alert(signal: Signal) -> bool:
             return False
 
 
+async def send_squareoff_alert(signal: Signal, current_price: float, minutes_left: int) -> bool:
+    """Send a near-expiry square-off warning with live P&L and an inline 'Mark as Sold' button."""
+    is_call = signal.direction.value == "CALL"
+    if is_call:
+        unrealized = (current_price - signal.entry) * signal.suggested_lots
+    else:
+        unrealized = (signal.entry - current_price) * signal.suggested_lots
+
+    pnl_emoji = "📈" if unrealized >= 0 else "📉"
+    pnl_sign = "+" if unrealized >= 0 else ""
+    dir_label = "CALL (BUY CE)" if is_call else "PUT (BUY PE)"
+
+    text = (
+        f"⚠️ *{signal.symbol} Signal #{signal.id} — Square Off in {minutes_left} min!*\n\n"
+        f"{dir_label} | Strike: `{signal.strike:.0f}` | Expiry: `{signal.expiry}`\n\n"
+        f"Entry: `{signal.entry:.1f}` → Now: `{current_price:.1f}`\n"
+        f"{pnl_emoji} Unrealized P&L: *{pnl_sign}₹{unrealized:,.0f}*\n\n"
+        f"🏁 Target: `{signal.target:.1f}` | 🛑 SL: `{signal.stop_loss:.1f}`\n\n"
+        f"_Auto-expires at 3:30 PM if not closed._"
+    )
+
+    url = TELEGRAM_API.format(token=settings.telegram_bot_token)
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.post(url, json={
+                "chat_id": settings.telegram_chat_id,
+                "text": text,
+                "parse_mode": "Markdown",
+                "reply_markup": {
+                    "inline_keyboard": [[
+                        {"text": "✅ Mark as Sold", "callback_data": f"sold_{signal.id}"}
+                    ]]
+                },
+            }, timeout=10)
+            resp.raise_for_status()
+            logger.info("Squareoff alert sent", signal_id=signal.id, minutes_left=minutes_left)
+            return True
+        except Exception as e:
+            logger.error("Squareoff alert failed", signal_id=signal.id, error=str(e))
+            return False
+
+
+async def answer_callback_query(callback_query_id: str, text: str) -> None:
+    """Acknowledge a Telegram inline button press (removes the loading spinner)."""
+    url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/answerCallbackQuery"
+    async with httpx.AsyncClient() as client:
+        try:
+            await client.post(url, json={
+                "callback_query_id": callback_query_id,
+                "text": text,
+            }, timeout=5)
+        except Exception:
+            pass
+
+
 async def send_text_alert(text: str) -> bool:
     url = TELEGRAM_API.format(token=settings.telegram_bot_token)
     async with httpx.AsyncClient() as client:
