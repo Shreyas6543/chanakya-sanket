@@ -100,6 +100,7 @@ docs/
 2. `iteration-2/FINAL_Claude_Build_Spec.docx` — full technical spec this codebase is built from
 3. `iteration-1/UPDATED_Master_Trading_Roadmap.docx` — context on earlier decisions
 4. `AI_Trading_Intelligence_System_Roadmap.docx` — original vision (some superseded by iteration-2)
+5. **Chat history + decisions log (Google Doc)**: https://docs.google.com/document/d/12-VHaGOsw_-GqPD6uNQ74OhMLdKvmhdoZhdDDnKvz3o/edit?usp=sharing — contains pasted chat sessions with key decisions, reasoning, and context not captured elsewhere. Read with WebFetch tool.
 
 ---
 
