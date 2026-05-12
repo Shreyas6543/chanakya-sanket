@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
+import type { DashboardData } from '../types'
 
 const SUGGESTED = [
   'Why is my win rate where it is?',
@@ -10,23 +11,26 @@ const SUGGESTED = [
   'How do my expired signals affect the overall picture?',
 ]
 
-export default function ClaudePanel({ dashboardData }) {
-  const [question, setQuestion]   = useState('')
-  const [response, setResponse]   = useState('')
-  const [loading, setLoading]     = useState(false)
-  const [error, setError]         = useState(null)
-  const responseRef               = useRef(null)
-  const abortRef                  = useRef(null)
+interface Props {
+  dashboardData: DashboardData | null
+}
 
-  // Auto-scroll response box as text streams in
+export default function ClaudePanel({ dashboardData }: Props) {
+  const [question, setQuestion] = useState('')
+  const [response, setResponse] = useState('')
+  const [loading, setLoading]   = useState(false)
+  const [error, setError]       = useState<string | null>(null)
+  const responseRef             = useRef<HTMLDivElement>(null)
+  const abortRef                = useRef<AbortController | null>(null)
+
   useEffect(() => {
     if (responseRef.current) {
       responseRef.current.scrollTop = responseRef.current.scrollHeight
     }
   }, [response])
 
-  const ask = async (q) => {
-    const text = (q || question).trim()
+  const ask = async (q?: string) => {
+    const text = (q ?? question).trim()
     if (!text || loading) return
 
     setQuestion(text)
@@ -34,23 +38,22 @@ export default function ClaudePanel({ dashboardData }) {
     setError(null)
     setLoading(true)
 
-    // Cancel any in-flight request
-    if (abortRef.current) abortRef.current.abort()
+    abortRef.current?.abort()
     abortRef.current = new AbortController()
 
     try {
       const res = await fetch('/api/ai/analyze', {
-        method: 'POST',
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: text, context: dashboardData }),
-        signal: abortRef.current.signal,
+        body:    JSON.stringify({ question: text, context: dashboardData }),
+        signal:  abortRef.current.signal,
       })
 
       if (!res.ok) throw new Error(`API error ${res.status}`)
 
-      const reader = res.body.getReader()
+      const reader  = res.body!.getReader()
       const decoder = new TextDecoder()
-      let buffer = ''
+      let buffer    = ''
 
       while (true) {
         const { done, value } = await reader.read()
@@ -58,7 +61,7 @@ export default function ClaudePanel({ dashboardData }) {
 
         buffer += decoder.decode(value, { stream: true })
         const lines = buffer.split('\n')
-        buffer = lines.pop() // keep incomplete line
+        buffer = lines.pop() ?? ''
 
         for (const line of lines) {
           if (!line.startsWith('data: ')) continue
@@ -68,13 +71,20 @@ export default function ClaudePanel({ dashboardData }) {
         }
       }
     } catch (e) {
-      if (e.name !== 'AbortError') setError(e.message)
+      if (e instanceof Error && e.name !== 'AbortError') setError(e.message)
     } finally {
       setLoading(false)
     }
   }
 
-  const hasData = dashboardData && dashboardData.overview
+  const hasData = dashboardData?.overview != null
+
+  const clear = () => {
+    setResponse('')
+    setQuestion('')
+    abortRef.current?.abort()
+    setLoading(false)
+  }
 
   return (
     <div className="bg-gray-900 rounded-xl overflow-hidden">
@@ -85,7 +95,9 @@ export default function ClaudePanel({ dashboardData }) {
             <span className="text-purple-400">✦</span> Ask Chanakya AI
           </h3>
           <p className="text-xs text-gray-500 mt-0.5">
-            Claude analyses your current signal data — {hasData ? `${dashboardData.overview.total_signals} signals loaded` : 'load data first using the filters above'}
+            {hasData
+              ? `${dashboardData!.overview.total_signals} signals loaded`
+              : 'load data first using the filters above'}
           </p>
         </div>
         {loading && (
@@ -119,13 +131,13 @@ export default function ClaudePanel({ dashboardData }) {
             type="text"
             value={question}
             onChange={e => setQuestion(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && ask()}
+            onKeyDown={e => { if (e.key === 'Enter') void ask() }}
             placeholder={hasData ? 'Ask anything about your trading data…' : 'Load signals above first'}
             disabled={!hasData || loading}
             className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-purple-500 disabled:opacity-50"
           />
           <button
-            onClick={() => ask()}
+            onClick={() => void ask()}
             disabled={!hasData || loading || !question.trim()}
             className="px-4 py-2.5 bg-purple-600 hover:bg-purple-500 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded-lg text-sm font-medium transition-colors"
           >
@@ -133,7 +145,7 @@ export default function ClaudePanel({ dashboardData }) {
           </button>
           {(response || loading) && (
             <button
-              onClick={() => { setResponse(''); setQuestion(''); if (abortRef.current) abortRef.current.abort(); setLoading(false) }}
+              onClick={clear}
               className="px-3 py-2.5 bg-gray-800 hover:bg-gray-700 text-gray-400 rounded-lg text-sm transition-colors"
             >
               Clear
