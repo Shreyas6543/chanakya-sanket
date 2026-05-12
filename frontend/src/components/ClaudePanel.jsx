@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
+import ReactMarkdown from 'react-markdown'
 
 const SUGGESTED = [
   'Why is my win rate where it is?',
@@ -151,11 +152,23 @@ export default function ClaudePanel({ dashboardData }) {
         {(response || loading) && (
           <div
             ref={responseRef}
-            className="bg-gray-800/60 border border-gray-700 rounded-xl px-5 py-4 text-sm text-gray-200 leading-relaxed whitespace-pre-wrap max-h-96 overflow-y-auto"
+            className="bg-gray-800/60 border border-gray-700 rounded-xl px-5 py-4 text-sm text-gray-200 leading-relaxed max-h-96 overflow-y-auto prose prose-invert prose-sm max-w-none
+              [&_h1]:text-white [&_h1]:text-base [&_h1]:font-bold [&_h1]:mt-3 [&_h1]:mb-1
+              [&_h2]:text-white [&_h2]:text-sm  [&_h2]:font-semibold [&_h2]:mt-3 [&_h2]:mb-1
+              [&_h3]:text-gray-300 [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:mt-2 [&_h3]:mb-1
+              [&_p]:my-1.5 [&_p]:text-gray-200
+              [&_ul]:my-1.5 [&_ul]:pl-4 [&_ul]:space-y-0.5
+              [&_ol]:my-1.5 [&_ol]:pl-4 [&_ol]:space-y-0.5
+              [&_li]:text-gray-300
+              [&_strong]:text-white [&_strong]:font-semibold
+              [&_code]:bg-gray-700 [&_code]:text-purple-300 [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-xs
+              [&_pre]:bg-gray-900 [&_pre]:rounded-lg [&_pre]:p-3 [&_pre]:overflow-x-auto
+              [&_blockquote]:border-l-2 [&_blockquote]:border-purple-500 [&_blockquote]:pl-3 [&_blockquote]:text-gray-400 [&_blockquote]:italic
+              [&_hr]:border-gray-700 [&_hr]:my-3"
           >
-            {response}
+            <ReactMarkdown>{response}</ReactMarkdown>
             {loading && (
-              <span className="inline-block w-1.5 h-4 bg-purple-400 ml-0.5 animate-pulse rounded-sm" />
+              <span className="inline-block w-1.5 h-4 bg-purple-400 ml-0.5 animate-pulse rounded-sm align-middle" />
             )}
           </div>
         )}
