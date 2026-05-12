@@ -9,9 +9,6 @@ class Settings(BaseSettings):
     env: str = "development"
     log_level: str = "INFO"
 
-    # Anthropic (AI signal filter)
-    anthropic_api_key: str = ""
-
     # Upstox
     upstox_api_key: str
     upstox_api_secret: str

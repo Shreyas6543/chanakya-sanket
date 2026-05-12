@@ -1,86 +1,40 @@
 """
-Claude AI signal filter.
-Evaluates each live signal's context before Telegram alert fires.
+Rule-based signal filter derived from 1,409-signal backtest (May 2025–May 2026).
+No external API — pure Python logic using our own statistical findings.
 Returns GO / NO_GO / WATCH with reasoning.
-
-Skip for backfill/historical signals — only for live source.
 """
-import json
 import structlog
 from dataclasses import dataclass
 
-import anthropic
-
 logger = structlog.get_logger()
-
-# Statistical patterns from 1,409-signal backtest (May 2025–May 2026)
-# Embedded as system prompt context — cached on first call.
-_SYSTEM_PROMPT = """You are an intraday options trading signal evaluator for Indian markets (NIFTY and BANKNIFTY).
-
-You will receive signal context from a rule-based engine and must decide whether to trade it.
-
-## Statistical patterns from 1,409 historical signals (May 2025–May 2026, 5-min candles):
-
-### Win rate by time of day (IST):
-- 09:00–09:59: 46% WR (606 signals)
-- 10:00–10:59: 56% WR (212 signals) ← good window
-- 11:00–11:59: 61% WR (152 signals) ← BEST window
-- 12:00–12:59: 46% WR (157 signals)
-- 13:00–13:59: 38% WR (144 signals) ← weakening
-- 14:00–14:59: 36% WR (97 signals)  ← weak
-- 15:00–15:30: 2%  WR (41 signals)  ← AVOID — near EOD, liquidity dries up
-
-### Win rate by strategy combination:
-- opening_range_breakout + rsi_momentum: 48% WR (1,222 signals) ← primary combo
-- opening_range_breakout + vwap_breakout: 35% WR (153 signals) ← weaker
-- All three strategies: 33% WR (27 signals) ← adds noise
-
-### Key observations:
-- VWAP breakout as the sole or primary reason correlates with lower WR
-- RSI momentum + ORB together is the most reliable combo
-- 15:00+ signals are almost worthless (EOD chop, wide spreads)
-- 10:00–11:00 window has best edge — fresh trend established, full liquidity
-- High ATR (trending day) improves outcomes vs low ATR (choppy)
-- RSI above 60 for CALL or below 40 for PUT suggests momentum alignment
-- VWAP distance > 0.5% in signal direction = confirms breakout
-- Break-even WR for this R:R ratio (2×ATR target / 1×ATR SL) = 33.3%
-
-## Your task:
-Evaluate the signal and return a JSON object with exactly these fields:
-{
-  "verdict": "GO" | "NO_GO" | "WATCH",
-  "score": <integer 0-100, your confidence in the trade>,
-  "reason": "<one concise sentence explaining the decision>"
-}
-
-GO = trade it (high confidence, good context)
-WATCH = marginal, worth monitoring but not ideal
-NO_GO = skip this signal (bad time, weak combo, unfavourable context)
-
-Be concise. Think step by step about: time of day, strategy combo, RSI level, VWAP distance, ATR context."""
 
 
 @dataclass
 class FilterResult:
-    verdict: str        # "GO", "NO_GO", "WATCH"
-    score: int          # 0-100
+    verdict: str    # "GO", "NO_GO", "WATCH"
+    score: int      # 0-100
     reason: str
-    raw_response: str   # full Claude response for logging
 
 
-_client: anthropic.AsyncAnthropic | None = None
+# Win rates from backtest by hour (IST)
+_HOUR_WR = {
+    9:  46.0,
+    10: 55.7,
+    11: 61.2,
+    12: 45.9,
+    13: 37.5,
+    14: 36.1,
+    15:  2.4,   # already blocked upstream, but kept here as safety
+}
 
-
-def _get_client() -> anthropic.AsyncAnthropic | None:
-    global _client
-    if _client is not None:
-        return _client
-    from app.config import get_settings
-    settings = get_settings()
-    if not settings.anthropic_api_key:
-        return None
-    _client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
-    return _client
+# Win rates by strategy combo
+_COMBO_WR = {
+    frozenset(["opening_range_breakout", "rsi_momentum"]):              48.2,
+    frozenset(["opening_range_breakout", "vwap_breakout"]):             34.6,
+    frozenset(["rsi_momentum", "vwap_breakout"]):                       21.7,
+    frozenset(["opening_range_breakout", "rsi_momentum", "vwap_breakout"]): 33.3,
+}
+_BREAKEVEN_WR = 33.3
 
 
 async def evaluate_signal(
@@ -90,78 +44,89 @@ async def evaluate_signal(
     signal_context: dict,
 ) -> FilterResult:
     """
-    Ask Claude to evaluate a signal before it fires.
-    Falls back to GO if API key not set or call fails — never blocks a signal due to API issues.
+    Evaluate signal context against backtest-derived rules.
+    Returns GO / WATCH / NO_GO with a reason string.
     """
-    client = _get_client()
-    if client is None:
-        return FilterResult(verdict="GO", score=confidence, reason="AI filter disabled (no API key)", raw_response="")
-
-    # Build the user message
     hour = signal_context.get("hour")
-    strategies = signal_context.get("strategies_fired", [])
-    combo = "+".join(sorted(strategies))
+    rsi = signal_context.get("rsi") or 50.0
+    vwap_dist = signal_context.get("vwap_distance_pct") or 0.0
+    strategies = frozenset(signal_context.get("strategies_fired", []))
+    combo_wr = _COMBO_WR.get(strategies)
+    hour_wr = _HOUR_WR.get(hour, 40.0)
 
-    user_msg = f"""Signal to evaluate:
-- Symbol: {symbol}
-- Direction: {direction}
-- Engine confidence: {confidence}/100
-- Time (IST hour): {hour}:{"0" + str(signal_context.get("minute", 0)) if signal_context.get("minute", 0) < 10 else signal_context.get("minute", 0)}
-- Strategies fired: {combo}
-- RSI: {signal_context.get("rsi")}
-- VWAP distance: {signal_context.get("vwap_distance_pct")}%
-- ATR: {signal_context.get("atr")}
-- PCR (EOD): {signal_context.get("pcr")}
+    reasons = []
+    score = confidence  # start from engine confidence
 
-Evaluate this signal. Return only the JSON object."""
+    # --- Time of day ---
+    if hour == 15:
+        return FilterResult(verdict="NO_GO", score=10, reason="15:00 window — 2.4% WR, skip")
+    elif hour == 11:
+        score += 10
+        reasons.append("11:00 window (61% WR, best of day)")
+    elif hour == 10:
+        score += 5
+        reasons.append("10:00 window (56% WR)")
+    elif hour in (13, 14):
+        score -= 8
+        reasons.append(f"{hour}:00 window (WR {hour_wr}%, weakening)")
 
-    try:
-        response = await client.messages.create(
-            model="claude-opus-4-6",
-            max_tokens=256,
-            thinking={"type": "adaptive"},
-            system=[{
-                "type": "text",
-                "text": _SYSTEM_PROMPT,
-                "cache_control": {"type": "ephemeral"},  # cache system prompt across calls
-            }],
-            messages=[{"role": "user", "content": user_msg}],
-        )
+    # --- Strategy combo ---
+    if combo_wr is not None:
+        if combo_wr >= 45:
+            score += 8
+            reasons.append(f"combo WR {combo_wr}%")
+        elif combo_wr < _BREAKEVEN_WR:
+            score -= 15
+            reasons.append(f"combo WR {combo_wr}% (below break-even)")
+        else:
+            reasons.append(f"combo WR {combo_wr}%")
+    elif "vwap_breakout" in strategies and len(strategies) == 1:
+        score -= 20
+        reasons.append("VWAP-only (weak, no ORB/RSI confirmation)")
 
-        raw = next((b.text for b in response.content if b.type == "text"), "")
+    # --- RSI alignment ---
+    if direction == "CALL":
+        if rsi >= 60:
+            score += 5
+            reasons.append(f"RSI {rsi} (momentum aligned)")
+        elif rsi < 50:
+            score -= 10
+            reasons.append(f"RSI {rsi} (not yet bullish)")
+    else:  # PUT
+        if rsi <= 40:
+            score += 5
+            reasons.append(f"RSI {rsi} (momentum aligned)")
+        elif rsi > 50:
+            score -= 10
+            reasons.append(f"RSI {rsi} (not yet bearish)")
 
-        # Parse JSON from response
-        # Strip markdown code fences if present
-        clean = raw.strip()
-        if clean.startswith("```"):
-            clean = clean.split("```")[1]
-            if clean.startswith("json"):
-                clean = clean[4:]
-        parsed = json.loads(clean.strip())
+    # --- VWAP distance confirmation ---
+    if direction == "CALL" and vwap_dist > 0.3:
+        score += 5
+        reasons.append(f"above VWAP +{vwap_dist}%")
+    elif direction == "PUT" and vwap_dist < -0.3:
+        score += 5
+        reasons.append(f"below VWAP {vwap_dist}%")
+    elif abs(vwap_dist) < 0.1:
+        reasons.append("price hugging VWAP (choppy)")
 
-        verdict = parsed.get("verdict", "GO").upper()
-        if verdict not in ("GO", "NO_GO", "WATCH"):
-            verdict = "GO"
+    score = max(0, min(100, score))
 
-        result = FilterResult(
-            verdict=verdict,
-            score=int(parsed.get("score", confidence)),
-            reason=parsed.get("reason", ""),
-            raw_response=raw,
-        )
+    if score >= 65:
+        verdict = "GO"
+    elif score >= 45:
+        verdict = "WATCH"
+    else:
+        verdict = "NO_GO"
 
-        logger.info(
-            "AI signal filter",
-            symbol=symbol,
-            direction=direction,
-            verdict=result.verdict,
-            score=result.score,
-            reason=result.reason,
-            input_tokens=response.usage.input_tokens,
-            output_tokens=response.usage.output_tokens,
-        )
-        return result
+    reason = " | ".join(reasons) if reasons else "no strong edge factors"
 
-    except Exception as e:
-        logger.warning("AI signal filter failed — defaulting to GO", error=str(e))
-        return FilterResult(verdict="GO", score=confidence, reason=f"Filter error: {e}", raw_response="")
+    logger.info(
+        "Signal filter",
+        symbol=symbol,
+        direction=direction,
+        verdict=verdict,
+        score=score,
+        reason=reason,
+    )
+    return FilterResult(verdict=verdict, score=score, reason=reason)
