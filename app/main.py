@@ -402,14 +402,7 @@ async def api_dashboard(
     """
     from datetime import date as date_type, datetime, timezone
     from app.db.models import SignalOutcome, StrategyResult
-    from sqlalchemy import and_, or_
-
-    # Parse date range
-    try:
-        d_start = datetime.combine(date_type.fromisoformat(start_date), datetime.min.time()) if start_date else None
-        d_end   = datetime.combine(date_type.fromisoformat(end_date),   datetime.max.time()) if end_date else None
-    except ValueError:
-        return {"error": "Invalid date format. Use YYYY-MM-DD"}
+    from sqlalchemy import and_, text as sa_text
 
     strategy_list = [s.strip() for s in strategies.split(",")] if strategies else []
 
@@ -419,10 +412,19 @@ async def api_dashboard(
             select(Signal, SignalOutcome)
             .outerjoin(SignalOutcome, Signal.id == SignalOutcome.signal_id)
         )
-        if d_start:
-            q = q.where(Signal.created_at >= d_start)
-        if d_end:
-            q = q.where(Signal.created_at <= d_end)
+
+        # Date filter on signal_context->>'signal_time' (the actual trading date),
+        # NOT created_at (which reflects when the backfill script ran — always today).
+        if start_date:
+            q = q.where(
+                sa_text("(signal_context->>'signal_time')::timestamptz >= :start")
+                .bindparams(start=f"{start_date}T00:00:00+05:30")
+            )
+        if end_date:
+            q = q.where(
+                sa_text("(signal_context->>'signal_time')::timestamptz <= :end")
+                .bindparams(end=f"{end_date}T23:59:59+05:30")
+            )
 
         # Strategy filter: only signals where at least one selected strategy fired
         if strategy_list:
@@ -483,8 +485,11 @@ async def api_dashboard(
             by_direction[d]["wins"] += 1
 
         ctx = signal.signal_context or {}
+        # Use signal_time from context (actual trading date) — created_at is backfill run date
+        signal_time = ctx.get("signal_time") or signal.created_at.isoformat()
         signals_out.append({
             "id": signal.id,
+            "signal_time": signal_time,
             "created_at": signal.created_at.isoformat(),
             "symbol": signal.symbol,
             "direction": signal.direction.value,

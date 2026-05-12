@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 
 const API = ''  // proxied to :8000 via vite.config.js
 
@@ -11,11 +11,6 @@ const STRATEGIES = [
 
 function todayStr() {
   return new Date().toISOString().slice(0, 10)
-}
-function monthAgoStr() {
-  const d = new Date()
-  d.setMonth(d.getMonth() - 1)
-  return d.toISOString().slice(0, 10)
 }
 
 function StatCard({ label, value, sub, color }) {
@@ -43,13 +38,13 @@ function OutcomeBadge({ outcome }) {
 }
 
 export default function App() {
-  const [startDate, setStartDate]     = useState(monthAgoStr())
+  const [startDate, setStartDate]     = useState('2025-01-01')
   const [endDate, setEndDate]         = useState(todayStr())
   const [selected, setSelected]       = useState(new Set())   // selected strategy ids
   const [data, setData]               = useState(null)
   const [loading, setLoading]         = useState(false)
   const [error, setError]             = useState(null)
-  const [sortCol, setSortCol]         = useState('created_at')
+  const [sortCol, setSortCol]         = useState('signal_time')
   const [sortAsc, setSortAsc]         = useState(false)
   const [symbolFilter, setSymbolFilter] = useState('ALL')
   const [dirFilter, setDirFilter]     = useState('ALL')
@@ -79,7 +74,13 @@ export default function App() {
     }
   }, [startDate, endDate, selected])
 
-  useEffect(() => { fetchData() }, [])
+  // Auto-fetch on mount and whenever filters change (debounce dates by 400ms)
+  const debounceRef = useRef(null)
+  useEffect(() => {
+    clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => { fetchData() }, 400)
+    return () => clearTimeout(debounceRef.current)
+  }, [startDate, endDate, selected])
 
   const signals = data?.signals || []
 
@@ -175,13 +176,12 @@ export default function App() {
           </div>
         </div>
 
-        <button
-          onClick={fetchData}
-          disabled={loading}
-          className="px-5 py-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 rounded-lg text-sm font-semibold transition-colors"
-        >
-          {loading ? 'Loading…' : 'Apply'}
-        </button>
+        {loading && (
+          <div className="flex items-center gap-2 text-sm text-gray-400">
+            <div className="w-4 h-4 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" />
+            Loading…
+          </div>
+        )}
       </div>
 
       {error && (
@@ -286,7 +286,7 @@ export default function App() {
             <table className="w-full text-sm">
               <thead className="bg-gray-800/50">
                 <tr>
-                  <Th col="created_at">Date/Time</Th>
+                  <Th col="signal_time">Date/Time</Th>
                   <Th col="symbol">Symbol</Th>
                   <Th col="direction">Dir</Th>
                   <Th col="confidence">Conf</Th>
@@ -310,8 +310,8 @@ export default function App() {
                 ) : sorted.map(s => (
                   <tr key={s.id} className="hover:bg-gray-800/50 transition-colors">
                     <td className="px-3 py-2 text-gray-400 whitespace-nowrap">
-                      {s.created_at ? new Date(s.created_at).toLocaleString('en-IN', {
-                        month: 'short', day: 'numeric',
+                      {s.signal_time ? new Date(s.signal_time).toLocaleString('en-IN', {
+                        year: 'numeric', month: 'short', day: 'numeric',
                         hour: '2-digit', minute: '2-digit'
                       }) : '—'}
                     </td>
