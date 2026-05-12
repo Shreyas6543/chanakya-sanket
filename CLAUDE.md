@@ -263,9 +263,14 @@ candles
 | RSI Momentum | +15 | RSI crosses above 55 within last 5 candles (lookback=5) + EMA9 > EMA21 > EMA50 |
 | Opening Range Breakout | +15 | Price breaks first-15m high/low (volume check skipped for zero-volume indices) |
 | Positive Sentiment | +10 | VADER compound > 0.05 on relevant news |
-| **Minimum to fire** | **35** | Backfill: 35 (max 50 without OI). Live: 35 (OI adds up to 25 more) |
+| **Minimum to fire** | **60** | Score is normalized to 0-100 — 60 means same quality bar in all modes |
 
 **Note:** BullishEngulfing strategy removed — backtested at 14.3% WR vs 33.3% break-even.
+
+**Confidence normalization (confidence.py):**
+Score is normalized to 0-100 as `raw_score / max_possible × 100`. Max possible excludes OI when `oi_data=None`. This keeps the 60-point threshold meaningful regardless of mode:
+- Backfill (no OI, max=55pts): all 3 strategies → score=83, 2 strategies → score=58 (doesn't fire)
+- Live (with OI, max=75pts): all 4 strategies → score=100, 3 strategies → score=67
 
 **OI strategy behaviour by mode:**
 - **Backfill/historical**: `oi_data=None` — OI strategy skipped entirely. EOD day-over-day OI has wrong granularity for intraday signals and was found to hurt WR (31.9% vs 36.5% without it).
@@ -437,6 +442,8 @@ Re-authenticate every morning: open http://localhost:8000/auth/login in browser.
 - [x] PUT/CALL support across all strategies (direction-aware SL/target/evaluation)
 - [x] Backfill endpoint with full grid-search parameter overrides
 - [x] Upstox token active — system running in live mode
+- [x] Candle seeding fixed — seeds 3 previous weekdays + today on startup (80+ candles ready from minute 1)
+- [x] Confidence normalized to 0-100 based on available strategies — threshold stays at 60 in all modes
 - [ ] Accumulate 50–100 real live signals (with real intraday OI from Upstox)
 - [ ] Analyse by_hour + by_strategy_combo once 50+ live signals collected
 
