@@ -37,31 +37,49 @@ class OIBuildupStrategy(BaseStrategy):
         price_breakout  = float(candles["close"].iloc[-1]) > float(candles["close"].iloc[-2])
         price_breakdown = float(candles["close"].iloc[-1]) < float(candles["close"].iloc[-2])
 
-        # CALL signal: call OI building up OR put OI unwinding — with price confirmation
-        # (either leg alone is sufficient for daily EOD data; intraday data may show both)
-        if (call_oi_buildup or put_oi_unwind) and price_breakout and not put_oi_buildup:
-            return StrategySignal(
-                fired=True,
-                direction="CALL",
-                points=self.max_points,
-                reason=self.name,
-                details={
-                    "call_oi_change": round(call_oi / prev_call_oi - 1, 3),
-                    "put_oi_change":  round(put_oi  / prev_put_oi  - 1, 3),
-                },
-            )
+        call_oi_change = round(call_oi / prev_call_oi - 1, 3)
+        put_oi_change  = round(put_oi  / prev_put_oi  - 1, 3)
 
-        # PUT signal: put OI building up OR call OI unwinding — with price confirmation
-        if (put_oi_buildup or call_oi_unwind) and price_breakdown and not call_oi_buildup:
-            return StrategySignal(
-                fired=True,
-                direction="PUT",
-                points=self.max_points,
-                reason=self.name,
-                details={
-                    "call_oi_change": round(call_oi / prev_call_oi - 1, 3),
-                    "put_oi_change":  round(put_oi  / prev_put_oi  - 1, 3),
-                },
-            )
+        # CALL signal: long buildup (strong) or short covering (weak)
+        # Long buildup  = call OI ↑ + price ↑ → new money, full points
+        # Short covering = put OI ↓ + price ↑ → exits only, half points
+        if price_breakout and not put_oi_buildup:
+            if call_oi_buildup:
+                # Long buildup — strongest signal (new conviction entering)
+                points = self.max_points
+                scenario = "long_buildup"
+            elif put_oi_unwind:
+                # Short covering — weaker signal (pain-driven, no new money)
+                points = self.max_points // 2
+                scenario = "short_covering"
+            else:
+                points = None
+
+            if points is not None:
+                return StrategySignal(
+                    fired=True, direction="CALL", points=points, reason=self.name,
+                    details={"scenario": scenario, "call_oi_change": call_oi_change, "put_oi_change": put_oi_change},
+                )
+
+        # PUT signal: short buildup (strong) or long unwinding (weak)
+        # Short buildup  = put OI ↑ + price ↓ → new money, full points
+        # Long unwinding = call OI ↓ + price ↓ → exits only, half points
+        if price_breakdown and not call_oi_buildup:
+            if put_oi_buildup:
+                # Short buildup — strongest bearish signal
+                points = self.max_points
+                scenario = "short_buildup"
+            elif call_oi_unwind:
+                # Long unwinding — weaker bearish signal
+                points = self.max_points // 2
+                scenario = "long_unwinding"
+            else:
+                points = None
+
+            if points is not None:
+                return StrategySignal(
+                    fired=True, direction="PUT", points=points, reason=self.name,
+                    details={"scenario": scenario, "call_oi_change": call_oi_change, "put_oi_change": put_oi_change},
+                )
 
         return StrategySignal(fired=False, direction=None, points=0, reason=self.name)

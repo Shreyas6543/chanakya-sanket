@@ -93,6 +93,14 @@
 
 ---
 
+### [2026-05-12] OI strategy — differentiated points by scenario strength
+- **What changed**: `oi_buildup.py` — long buildup and short buildup (new money entering) keep full 25 pts. Short covering and long unwinding (exits only, no new money) reduced to 12 pts (max_points // 2).
+- **Why**: Verified across Zerodha Varsity, StockEdge, TradeJini, Quora — all confirm long/short buildup are structurally stronger than covering/unwinding. Short covering = "pain-driven buying, not conviction". Previously all 4 scenarios awarded equal points.
+- **Result**: Pending backtest
+- **Status**: KEPT
+
+---
+
 ### [2026-05-12] signal_context JSONB added to every signal
 - **What changed**: `Signal` model — added `signal_context` JSON column. `generator.py` — captures RSI, VWAP distance%, ATR, PCR (real NSE EOD), strategies_fired, hour, minute at signal time.
 - **Why**: Needed to analyse which market conditions produce winning vs losing signals for future accuracy improvement.
