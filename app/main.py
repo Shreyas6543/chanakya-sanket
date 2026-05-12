@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 
+from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.db.database import create_tables, AsyncSessionLocal
 from app.db import models  # noqa: F401 — must import so SQLAlchemy registers all tables
@@ -119,6 +120,13 @@ app = FastAPI(
     description="Explainable intraday options trading signal system. Edge through knowledge, not luck.",
     version="0.1.0",
     lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -377,6 +385,168 @@ async def analytics():
             "by_hour": await get_time_of_day_performance(session),
             "by_strategy_combo": await get_strategy_combo_performance(session),
         }
+
+
+# ── Dashboard API ─────────────────────────────────────────────────────────────
+
+@app.get("/api/dashboard")
+async def api_dashboard(
+    start_date: str | None = None,
+    end_date: str | None = None,
+    strategies: str | None = None,  # comma-separated: "vwap_breakout,rsi_momentum"
+):
+    """
+    Filtered analytics for the UI dashboard.
+    Returns overview stats + signal list filtered by date range and strategies fired.
+    strategies='' or omitted → all signals. Otherwise only signals where ANY of those strategies fired.
+    """
+    from datetime import date as date_type, datetime, timezone
+    from app.db.models import SignalOutcome, StrategyResult
+    from sqlalchemy import and_, or_
+
+    # Parse date range
+    try:
+        d_start = datetime.combine(date_type.fromisoformat(start_date), datetime.min.time()) if start_date else None
+        d_end   = datetime.combine(date_type.fromisoformat(end_date),   datetime.max.time()) if end_date else None
+    except ValueError:
+        return {"error": "Invalid date format. Use YYYY-MM-DD"}
+
+    strategy_list = [s.strip() for s in strategies.split(",")] if strategies else []
+
+    async with AsyncSessionLocal() as session:
+        # Base query: signals joined with outcomes
+        q = (
+            select(Signal, SignalOutcome)
+            .outerjoin(SignalOutcome, Signal.id == SignalOutcome.signal_id)
+        )
+        if d_start:
+            q = q.where(Signal.created_at >= d_start)
+        if d_end:
+            q = q.where(Signal.created_at <= d_end)
+
+        # Strategy filter: only signals where at least one selected strategy fired
+        if strategy_list:
+            subq = (
+                select(StrategyResult.signal_id)
+                .where(
+                    and_(
+                        StrategyResult.fired == True,
+                        StrategyResult.strategy_name.in_(strategy_list),
+                    )
+                )
+                .distinct()
+            )
+            q = q.where(Signal.id.in_(subq))
+
+        q = q.order_by(Signal.created_at.desc())
+        result = await session.execute(q)
+        rows = result.all()
+
+    # Aggregate overview
+    total = wins = losses = expired = 0
+    total_pnl = 0.0
+    by_symbol: dict[str, dict] = {}
+    by_direction: dict[str, dict] = {}
+    signals_out = []
+
+    for signal, outcome in rows:
+        state = signal.state.value
+        result_label = outcome.result if outcome else None
+        pnl = round(outcome.pnl, 2) if outcome and outcome.pnl is not None else None
+
+        total += 1
+        if result_label == "TARGET_HIT":
+            wins += 1
+        elif result_label == "SL_HIT":
+            losses += 1
+        elif state == "EXPIRED":
+            expired += 1
+        if pnl:
+            total_pnl += pnl
+
+        # by symbol
+        sym = signal.symbol
+        if sym not in by_symbol:
+            by_symbol[sym] = {"total": 0, "wins": 0, "pnl": 0.0}
+        by_symbol[sym]["total"] += 1
+        if result_label == "TARGET_HIT":
+            by_symbol[sym]["wins"] += 1
+        if pnl:
+            by_symbol[sym]["pnl"] += pnl
+
+        # by direction
+        d = signal.direction.value
+        if d not in by_direction:
+            by_direction[d] = {"total": 0, "wins": 0}
+        by_direction[d]["total"] += 1
+        if result_label == "TARGET_HIT":
+            by_direction[d]["wins"] += 1
+
+        ctx = signal.signal_context or {}
+        signals_out.append({
+            "id": signal.id,
+            "created_at": signal.created_at.isoformat(),
+            "symbol": signal.symbol,
+            "direction": signal.direction.value,
+            "confidence": signal.confidence,
+            "strike": signal.strike,
+            "expiry": signal.expiry,
+            "entry": signal.entry,
+            "sl": signal.stop_loss,
+            "target": signal.target,
+            "regime": signal.regime.value,
+            "source": signal.source,
+            "state": state,
+            "outcome": result_label or state,
+            "pnl": pnl,
+            "strategies_fired": ctx.get("strategies_fired", []),
+            "rsi": ctx.get("rsi"),
+            "vwap_distance_pct": ctx.get("vwap_distance_pct"),
+            "hour": ctx.get("hour"),
+        })
+
+    resolved = wins + losses
+    overview = {
+        "total_signals": total,
+        "wins": wins,
+        "losses": losses,
+        "expired": expired,
+        "open": total - wins - losses - expired,
+        "win_rate": round(wins / resolved * 100, 1) if resolved > 0 else 0,
+        "total_pnl": round(total_pnl, 2),
+    }
+
+    by_symbol_out = [
+        {
+            "symbol": k,
+            "total": v["total"],
+            "wins": v["wins"],
+            "win_rate": round(v["wins"] / v["total"] * 100, 1) if v["total"] else 0,
+            "pnl": round(v["pnl"], 2),
+        }
+        for k, v in by_symbol.items()
+    ]
+    by_direction_out = [
+        {
+            "direction": k,
+            "total": v["total"],
+            "wins": v["wins"],
+            "win_rate": round(v["wins"] / v["total"] * 100, 1) if v["total"] else 0,
+        }
+        for k, v in by_direction.items()
+    ]
+
+    return {
+        "filters": {
+            "start_date": start_date,
+            "end_date": end_date,
+            "strategies": strategy_list or "all",
+        },
+        "overview": overview,
+        "by_symbol": by_symbol_out,
+        "by_direction": by_direction_out,
+        "signals": signals_out,
+    }
 
 
 # ── Admin ─────────────────────────────────────────────────────────────────────

@@ -1,4 +1,4 @@
-.PHONY: help dev infra stop logs status trigger debug analytics report simulate backfill
+.PHONY: help dev infra stop logs status trigger debug analytics report simulate backfill ui
 
 PYTHON := .venv/bin/python3
 UVICORN := .venv/bin/uvicorn
@@ -19,6 +19,7 @@ help:
 	@echo "  make analytics    Show win rate + P&L"
 	@echo "  make simulate     Replay a date using real Upstox historical candles"
 	@echo "  make backfill     Replay past N weeks to build signal history (default 6 weeks)"
+	@echo "  make ui           Start analytics dashboard UI on :5173"
 	@echo ""
 
 infra:
@@ -71,3 +72,6 @@ simulate:
 backfill:
 	@echo "Starting backfill — this may take a few minutes..."
 	@curl -s -X POST "$(API)/trigger/backfill$(if $(WEEKS),?weeks=$(WEEKS),)" --max-time 600 | $(PYTHON) -m json.tool
+
+ui:
+	cd frontend && npm run dev
