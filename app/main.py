@@ -1080,7 +1080,7 @@ async def trigger_backfill(
                 })
             logger.info("Backfill day done", date=str(sim_date), signals=len(signals), wins=wins, losses=losses)
 
-    resolved = total_wins + total_losses
+    resolved = total_wins + total_losses + total_expired  # EXPIRED = real cost (theta decay)
     win_rate = round(total_wins / resolved * 100, 1) if resolved > 0 else None
 
     # Send one Telegram summary

@@ -70,6 +70,8 @@ async def generate_signal(
     for strategy in STRATEGIES:
         if is_sideways and strategy.name in BREAKOUT_STRATEGIES:
             continue
+        if oi_data is None and strategy.name == "oi_buildup":
+            continue  # Skip OI strategy when data unavailable — keeps max_possible accurate
         result = strategy.evaluate(candles, oi_data)
         strategy_results.append(result)
 

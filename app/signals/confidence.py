@@ -27,7 +27,9 @@ def calculate_confidence(
     """
     fired = [s for s in strategy_signals if s.fired]
 
-    if not fired:
+    if len(fired) < 2:
+        # Require at least 2 strategies to agree — prevents single-strategy noise.
+        # In SIDEWAYS mode with OI unavailable, only RSI can fire; single RSI is not enough.
         return ConfidenceResult(score=0, reasons={}, direction=None)
 
     # Direction must be unanimous among fired strategies
@@ -58,20 +60,22 @@ def calculate_confidence(
         reasons["negative_sentiment"] = settings.points_positive_sentiment
         raw_score += settings.points_positive_sentiment
 
-    # Normalize score to 0-100 based on max possible from available strategies.
-    # This keeps the threshold (min_confidence=60) meaningful regardless of which
-    # strategies are available — e.g. no OI in backfill vs live OI available.
-    max_possible = (
-        settings.points_vwap_breakout +
-        settings.points_rsi_momentum +
-        settings.points_opening_range +
-        settings.points_oi_buildup +
-        settings.points_positive_sentiment
-    )
-    # If OI strategy was not in the evaluated list (oi_data=None), exclude it from max
+    # Normalize score to 0-100 based on max possible from strategies actually evaluated.
+    # Only strategies present in strategy_signals count toward the denominator.
+    # Sentiment only counts when sentiment_label is not None (otherwise it can never contribute).
+    # This keeps the 60-point threshold meaningful in all modes:
+    #   - Backfill (VWAP+RSI+ORB, no OI, no sentiment): max=50 → RSI+ORB (30pts) = 60% → fires
+    #   - Live (all 4 strategies + possible sentiment): max=75 → 3 strategies needed for 60%
     strategy_names = {s.reason for s in strategy_signals}
-    if "oi_buildup" not in strategy_names:
-        max_possible -= settings.points_oi_buildup
+    all_strategy_pts = {
+        "vwap_breakout":          settings.points_vwap_breakout,
+        "rsi_momentum":           settings.points_rsi_momentum,
+        "opening_range_breakout": settings.points_opening_range,
+        "oi_buildup":             settings.points_oi_buildup,
+    }
+    max_possible = sum(pts for name, pts in all_strategy_pts.items() if name in strategy_names)
+    if sentiment_label is not None:
+        max_possible += settings.points_positive_sentiment
 
     score = round(raw_score / max_possible * 100) if max_possible > 0 else 0
 
