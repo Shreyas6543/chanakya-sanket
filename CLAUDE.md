@@ -493,33 +493,80 @@ if expired. Re-authenticate via http://localhost:8000/auth/login.
 - [ ] Accumulate 50–100 real live signals (with real intraday OI from Upstox)
 - [ ] Analyse by_hour + by_strategy_combo once 50+ live signals collected
 
-### Phase 3 — Analytics Dashboard (not started)
-### Phase 4 — Strategy Optimization (not started)
-### Phase 5 — ML Layer (not started)
+### Phase 3 — Analytics Dashboard — COMPLETE ✓
+- [x] React + TypeScript frontend (strict mode, `tsc --noEmit` clean)
+- [x] `/api/dashboard` endpoint — filtered overview, by_symbol, by_direction, signal list
+- [x] `/api/ai/analyze` — streaming Claude AI analyst (Chanakya AI panel)
+- [x] EquityCurve component — cumulative P&L area chart, peak + max drawdown
+- [x] MonthlyBreakdown component — bar chart WR by month, green/yellow/red thresholds
+- [x] LivePrices widget — polls `/api/debug/live-prices` every 5s, price flash on tick
+- [x] By-hour and by-strategy-combo WR bars (client-side computed from signal data)
+- [x] Signal table with sort + filter (symbol, direction, outcome, source)
+- [x] Source tagging: live / historical / mock badges
+
+### Phase 4 — Strategy Optimization — SKIPPED
+Subsumed by Phase 5 ML. ML grid-search over features is strictly more powerful than manual parameter tuning.
+
+### Phase 5 — ML Layer — IN PROGRESS
+**Decision (May 2026):** Pull Phase 5 forward. Don't wait for live signal accumulation.
+Historical OHLCV + 5-year NSE EOD OI is sufficient to build a training dataset of 3,000–6,000 labeled examples.
+
+**ML architecture:**
+- Features: RSI, VWAP dist%, EMA alignment, ATR, PCR, OI change%, hour, day-of-week, month, regime, volume ratio (20+ total)
+- Label: TARGET_HIT=1, SL_HIT/EXPIRED=0 — forward-looking from signal bar, NO lookahead
+- Model: XGBoost or LightGBM — time-based train/test split (never random shuffle — leakage prevention)
+- Output: ML probability score 0–100 replaces rule-based confidence score
+- Threshold: tune on validation set (likely 55–65% probability → fire signal)
+
+**Key insight on OI:**
+NSE EOD OI as a ML *feature* (one of 20+) is valid — ML learns correct weighting.
+NSE EOD OI as a binary strategy *trigger* hurts WR (proven in Phase 2). These are different uses.
+Intraday 5-min OI history doesn't exist cheaply — not a blocker for ML.
+
+**Data plan:**
+- 5-min OHLCV: Upstox historical API (2yr) + yfinance for NSE indices (5yr)
+- NSE EOD OI: extend `scripts/download_nse_oi.py` back to Jan 2020 (from current May 2025)
+- ~1,250 trading days × 2–4 signals/day = 3,000–6,000 labeled training examples
+
+**Build steps:**
+1. Extend NSE OI download to Jan 2020
+2. Download 5-year 5-min OHLCV (Upstox history API + yfinance fallback)
+3. Build `scripts/build_ml_dataset.py` — replay candles, snapshot features at every signal bar, label forward outcomes
+4. Train model — `scripts/train_model.py` — time-based split, feature importance logging
+5. Save model artifact, integrate into `app/signals/confidence.py` as probability score
+6. Optional: Claude agent for feature importance analysis + regime-specific pattern discovery
+
 ### Phase 6 — Productization + SEBI Compliance (not started)
 
 ---
 
 ## Known Issues / Next Up
 1. **Token expiry unclear** — Token has NOT expired at midnight (May 12 2026). Upstox may have changed to longer-lived tokens. The 8:45 AM `token_check_job` will alert on Telegram if it ever expires.
-2. **December seasonal pattern** — Dec historically shows ~20% WR (well below break-even). Year-end thin liquidity, FII rebalancing. Consider skipping December or halving position size.
-3. **OI signal quality unknown** — Backfill uses no OI. First real test of OI strategy quality is live trading with Upstox intraday options chain. Watch `by_strategy_combo` analytics once 50+ live signals accumulate.
-4. **signal_context hour/minute null in backfill** — Historical candles use RangeIndex; timestamp extracted from column. Works correctly for live WebSocket candles (DatetimeIndex).
-5. **`/debug/strategies/{symbol}` overwrites live candle buffer** — This endpoint calls `generate_mock_candles()` which replaces real data. Never call it during market hours. Use `/debug/real-strategies/{symbol}` instead.
-6. **Partial candle lost on restart** — The candle currently being built from live ticks (not yet closed) is lost on server restart. Completed candles are safe in DB. Impact: ≤5 minutes of tick data lost.
+2. **December seasonal pattern** — Dec historically shows ~20% WR (well below break-even). ML model should learn this from month feature automatically.
+3. **signal_context hour/minute null in backfill** — Historical candles use RangeIndex; timestamp extracted from column. Works correctly for live WebSocket candles (DatetimeIndex).
+4. **`/debug/strategies/{symbol}` overwrites live candle buffer** — This endpoint calls `generate_mock_candles()` which replaces real data. Never call it during market hours. Use `/debug/real-strategies/{symbol}` instead.
+5. **Partial candle lost on restart** — The candle currently being built from live ticks (not yet closed) is lost on server restart. Completed candles are safe in DB. Impact: ≤5 minutes of tick data lost.
+
+## Phase 5 — Next Immediate Steps
+1. `python scripts/download_nse_oi.py --start 2020-01-01` — extend OI data to 5 years
+2. Build `scripts/download_ohlcv.py` — 5-min candles for NIFTY + BANKNIFTY via Upstox history API + yfinance
+3. Build `scripts/build_ml_dataset.py` — feature extraction + outcome labeling
+4. Build `scripts/train_model.py` — XGBoost with time-based CV, feature importance output
+5. Integrate model into `app/signals/confidence.py`
 
 ---
 
 ## Key Constraints (Never Violate)
-1. No auto-trading — ever in early phases
+1. No auto-trading — ever
 2. No self-modifying strategies
-3. No ML until Phase 5 is explicitly started
+3. ML model replaces/augments confidence score only — never triggers trades automatically
 4. All strategy threshold changes require manual approval
 5. Never commit `.env`
 6. Signals only generated during market hours (09:15–15:30 IST)
 7. Max 2 open signals per symbol at any time
 8. `make report` must always default to live signals only
 9. EXPIRED and USER_CLOSED both count as losses in win rate denominator — never exclude them
+10. ML training must use time-based train/test split — never random shuffle (prevents leakage)
 
 ---
 
