@@ -528,13 +528,32 @@ Intraday 5-min OI history doesn't exist cheaply — not a blocker for ML.
 - NSE EOD OI: extend `scripts/download_nse_oi.py` back to Jan 2020 (from current May 2025)
 - ~1,250 trading days × 2–4 signals/day = 3,000–6,000 labeled training examples
 
-**Build steps:**
-1. Extend NSE OI download to Jan 2020
-2. Download 5-year 5-min OHLCV (Upstox history API + yfinance fallback)
-3. Build `scripts/build_ml_dataset.py` — replay candles, snapshot features at every signal bar, label forward outcomes
-4. Train model — `scripts/train_model.py` — time-based split, feature importance logging
-5. Save model artifact, integrate into `app/signals/confidence.py` as probability score
-6. Optional: Claude agent for feature importance analysis + regime-specific pattern discovery
+**Sub-phases:**
+
+**Phase 5a — Data (1–2 days)**
+- Extend `scripts/download_nse_oi.py` back to Jan 2020 (from current May 2025 coverage)
+- Build `scripts/download_ohlcv.py` — 5-min OHLCV for NIFTY + BANKNIFTY via Upstox historical API with yfinance fallback for older dates
+
+**Phase 5b — Feature Extraction + Labeling (2–3 days)**
+- Build `scripts/build_ml_dataset.py`
+- For each trading day, replay candles through existing indicators (RSI, VWAP, EMA, ATR)
+- At every potential signal bar (where ≥1 strategy would fire), snapshot all features:
+  RSI, VWAP dist%, ATR, EMA alignment, hour, day-of-week, month, PCR, OI change%, regime, volume ratio (20+ features)
+- Label outcome forward-looking: TARGET_HIT=1, SL_HIT/EXPIRED=0
+- No lookahead: label uses only price data AFTER the signal bar
+
+**Phase 5c — Model Training (1 day)**
+- Build `scripts/train_model.py`
+- XGBoost or LightGBM
+- Time-based 80/20 train/test split — NEVER random shuffle (prevents leakage)
+- Output: probability score 0–100, replaces rule-based confidence score in `app/signals/confidence.py`
+- Log feature importances, confusion matrix, WR at different probability thresholds
+
+**Phase 5d — AI Agent Layer (2–3 days, optional)**
+- Claude agent (`scripts/analyse_model.py`) that reads feature importances and signal history
+- Spots regime-specific patterns (e.g. "RSI weight doubles in TRENDING months")
+- Suggests threshold adjustments per symbol, per time-of-day, per month
+- Output: human-readable report, not auto-applied
 
 ### Phase 6 — Productization + SEBI Compliance (not started)
 
@@ -548,11 +567,12 @@ Intraday 5-min OI history doesn't exist cheaply — not a blocker for ML.
 5. **Partial candle lost on restart** — The candle currently being built from live ticks (not yet closed) is lost on server restart. Completed candles are safe in DB. Impact: ≤5 minutes of tick data lost.
 
 ## Phase 5 — Next Immediate Steps
-1. `python scripts/download_nse_oi.py --start 2020-01-01` — extend OI data to 5 years
-2. Build `scripts/download_ohlcv.py` — 5-min candles for NIFTY + BANKNIFTY via Upstox history API + yfinance
-3. Build `scripts/build_ml_dataset.py` — feature extraction + outcome labeling
-4. Build `scripts/train_model.py` — XGBoost with time-based CV, feature importance output
-5. Integrate model into `app/signals/confidence.py`
+1. **5a**: Extend `scripts/download_nse_oi.py` to Jan 2020
+2. **5a**: Build `scripts/download_ohlcv.py` — 5-min OHLCV via Upstox + yfinance
+3. **5b**: Build `scripts/build_ml_dataset.py` — feature snapshot + forward labeling
+4. **5c**: Build `scripts/train_model.py` — XGBoost, time-based split, feature importance
+5. **5c**: Integrate model into `app/signals/confidence.py`
+6. **5d**: Build `scripts/analyse_model.py` — Claude agent for pattern discovery
 
 ---
 
