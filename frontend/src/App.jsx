@@ -25,14 +25,22 @@ function StatCard({ label, value, sub, color }) {
 
 function OutcomeBadge({ outcome }) {
   const map = {
-    TARGET_HIT: 'bg-green-900 text-green-300',
-    SL_HIT:     'bg-red-900 text-red-300',
-    EXPIRED:    'bg-gray-700 text-gray-400',
-    OPEN:       'bg-yellow-900 text-yellow-300',
+    TARGET_HIT:  'bg-green-900 text-green-300',
+    SL_HIT:      'bg-red-900 text-red-300',
+    EXPIRED:     'bg-gray-700 text-gray-400',
+    OPEN:        'bg-yellow-900 text-yellow-300',
+    USER_CLOSED: 'bg-blue-900 text-blue-300',
+  }
+  const labels = {
+    TARGET_HIT:  'Target Hit',
+    SL_HIT:      'SL Hit',
+    EXPIRED:     'Expired',
+    OPEN:        'Open',
+    USER_CLOSED: 'Sold',
   }
   return (
     <span className={`px-2 py-0.5 rounded text-xs font-medium ${map[outcome] || 'bg-gray-700 text-gray-300'}`}>
-      {outcome?.replace('_', ' ')}
+      {labels[outcome] ?? outcome?.replace(/_/g, ' ')}
     </span>
   )
 }
@@ -198,7 +206,7 @@ export default function App() {
             color={ov.win_rate >= 40 ? 'text-green-400' : ov.win_rate >= 33 ? 'text-yellow-400' : 'text-red-400'} />
           <StatCard label="Wins" value={ov.wins} color="text-green-400" />
           <StatCard label="Losses" value={ov.losses} color="text-red-400" />
-          <StatCard label="Expired" value={ov.expired} color="text-gray-400" />
+          <StatCard label="Expired" value={ov.expired} color="text-gray-400" sub="incl. sold" />
           <StatCard label="Open" value={ov.open} color="text-yellow-400" />
           <StatCard
             label="Total P&L"
@@ -278,6 +286,7 @@ export default function App() {
                 <option value="TARGET_HIT">Target hit</option>
                 <option value="SL_HIT">SL hit</option>
                 <option value="EXPIRED">Expired</option>
+                <option value="USER_CLOSED">Sold (manual)</option>
                 <option value="OPEN">Open</option>
               </select>
             </div>
