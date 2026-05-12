@@ -560,17 +560,36 @@ async def _simulate_one_day(
     MAX_DAILY_LOSSES = 3  # Mirror of scheduler.py circuit breaker
     daily_sl_count = 0    # Global SL counter across both symbols for this day
 
+    # Find the previous trading day to use as seed candles (mirrors live server startup)
+    from datetime import timedelta
+    prev_date = sim_date - timedelta(days=1)
+    while prev_date.weekday() >= 5:
+        prev_date -= timedelta(days=1)
+
     for symbol in ["NIFTY", "BANKNIFTY"]:
         if len(results) >= count:
             break
         if daily_sl_count >= MAX_DAILY_LOSSES:
             break  # Circuit breaker: wipeout day — stop all symbols
 
-        candles_full = await fetch_historical_candles(symbol, sim_date)
-        if candles_full.empty or len(candles_full) < MIN_CANDLES:
+        candles_today = await fetch_historical_candles(symbol, sim_date)
+        if candles_today.empty:
             continue
 
-        for window_end in range(MIN_CANDLES, len(candles_full) + 1):
+        # Seed with previous day's candles so strategies have history from candle 1
+        candles_prev = await fetch_historical_candles(symbol, prev_date)
+        if not candles_prev.empty:
+            import pandas as pd
+            candles_full = pd.concat([candles_prev.tail(MIN_CANDLES), candles_today], ignore_index=True)
+        else:
+            candles_full = candles_today
+
+        if len(candles_full) < MIN_CANDLES:
+            continue
+
+        # Slide window starting from the first candle of today (seed already provides history)
+        today_start_idx = len(candles_full) - len(candles_today)
+        for window_end in range(today_start_idx + 1, len(candles_full) + 1):
             if len(results) >= count:
                 break
             if daily_sl_count >= MAX_DAILY_LOSSES:

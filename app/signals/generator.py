@@ -56,6 +56,12 @@ async def generate_signal(
     if not force and not can_generate_signals():
         return None
 
+    # Block 15:00–15:30 signals — 2.4% WR in backtest (41 signals), near-guaranteed loss
+    from app.utils.market_hours import now_ist
+    _now = now_ist()
+    if not force and _now.hour == 15:
+        return None
+
     regime = detect_regime(candles)
     is_sideways = regime == "SIDEWAYS"
 
@@ -171,6 +177,25 @@ async def generate_signal(
 
     suggested_lots = min(lots_by_risk, lots_by_capital)
     capital_required = round(estimated_premium * suggested_lots * lot_size, 2)
+
+    # AI filter — only for live signals, skip in backfill/mock to avoid API cost
+    ai_verdict = "GO"
+    ai_reason = ""
+    if source == "live":
+        from app.ai.signal_filter import evaluate_signal as _ai_eval
+        _filter = await _ai_eval(symbol, confidence.direction, confidence.score, signal_context)
+        ai_verdict = _filter.verdict
+        ai_reason = _filter.reason
+        signal_context["ai_verdict"] = ai_verdict
+        signal_context["ai_reason"] = ai_reason
+        if ai_verdict == "NO_GO":
+            logger.info(
+                "Signal blocked by AI filter",
+                symbol=symbol,
+                direction=confidence.direction,
+                reason=ai_reason,
+            )
+            return None
 
     signal = Signal(
         symbol=symbol,
