@@ -106,20 +106,34 @@ async def generate_signal(
     _vwap_val = float(_vwap_series.iloc[-1])
     _rsi_val = float(calculate_rsi(candles["close"]).iloc[-1])
     _vwap_dist_pct = round((spot_price - _vwap_val) / _vwap_val * 100, 3) if _vwap_val else 0
-    _pcr = round(oi_data["put_oi"] / oi_data["call_oi"], 3) if oi_data and oi_data.get("call_oi") else None
 
-    # Extract signal timestamp from candle index
-    _sig_time = None
-    if hasattr(candles.index, "name") and candles.index.dtype == "datetime64[ns, UTC]":
-        _sig_time = candles.index[-1].isoformat()
-    elif "timestamp" in candles.columns:
-        _sig_time = str(candles["timestamp"].iloc[-1])
+    # Extract signal timestamp — handle both DatetimeIndex and RangeIndex+timestamp column
+    _sig_ts = None
+    if "timestamp" in candles.columns:
+        _sig_ts = candles["timestamp"].iloc[-1]
+    elif hasattr(candles.index[-1], "hour"):
+        _sig_ts = candles.index[-1]
 
+    _sig_time = str(_sig_ts) if _sig_ts is not None else None
     try:
-        _hour = int(candles.index[-1].hour)
-        _minute = int(candles.index[-1].minute)
+        _hour = int(_sig_ts.hour)
+        _minute = int(_sig_ts.minute)
     except (AttributeError, TypeError):
         _hour = _minute = None
+
+    # Real EOD PCR from NSE data (for analysis) — separate from mock OI used in strategy
+    _real_pcr = None
+    try:
+        from app.market_data.real_oi import get_real_oi_data, oi_data_available
+        from datetime import date as _date
+        if oi_data_available() and _sig_ts is not None:
+            _d = _sig_ts.date() if hasattr(_sig_ts, "date") else None
+            if _d:
+                _real_oi = get_real_oi_data(symbol, _d)
+                if _real_oi and _real_oi.get("call_oi"):
+                    _real_pcr = round(_real_oi["put_oi"] / _real_oi["call_oi"], 3)
+    except Exception:
+        pass
 
     signal_context = {
         "signal_time": _sig_time,
@@ -128,9 +142,7 @@ async def generate_signal(
         "rsi": round(_rsi_val, 2),
         "vwap_distance_pct": _vwap_dist_pct,
         "atr": round(atr, 2),
-        "pcr": _pcr,
-        "ce_oi": oi_data.get("call_oi") if oi_data else None,
-        "pe_oi": oi_data.get("put_oi") if oi_data else None,
+        "pcr": _real_pcr,  # real NSE EOD PCR (live: from Upstox options chain via oi_data)
         "strategies_fired": [r.reason for r in strategy_results if r.fired],
     }
     entry = spot_price

@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     risk_per_trade_pct: float = 1.5           # Risk (SL distance) as % of capital
     max_daily_loss_pct: float = 5.0
     max_open_signals_per_symbol: int = 2
-    min_confidence_score: int = 60
+    min_confidence_score: int = 35
 
     # ATR regime threshold (fraction of 20-period average)
     atr_sideways_threshold: float = 0.70
@@ -72,7 +72,7 @@ class Settings(BaseSettings):
     # Strategy thresholds
     rsi_crossover_level: float = 55.0
     volume_spike_multiplier: float = 1.5
-    oi_buildup_threshold: float = 0.05    # 5% OI change required
+    oi_buildup_threshold: float = 0.01    # 1% OI change — calibrated for real day-over-day NSE data
     vwap_tolerance_pct: float = 0.002     # Within 0.2% of VWAP = "near VWAP"
 
     # Instruments to track

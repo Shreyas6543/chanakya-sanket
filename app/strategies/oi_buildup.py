@@ -25,34 +25,43 @@ class OIBuildupStrategy(BaseStrategy):
             return StrategySignal(fired=False, direction=None, points=0, reason=self.name)
 
         threshold = settings.oi_buildup_threshold
+
         call_oi_buildup = call_oi > prev_call_oi * (1 + threshold)
-        put_oi_unwind = put_oi < prev_put_oi * (1 - threshold)
+        call_oi_unwind  = call_oi < prev_call_oi * (1 - threshold)
+        put_oi_buildup  = put_oi  > prev_put_oi  * (1 + threshold)
+        put_oi_unwind   = put_oi  < prev_put_oi  * (1 - threshold)
 
         if len(candles) < 2:
             return StrategySignal(fired=False, direction=None, points=0, reason=self.name)
 
-        price_breakout = float(candles["close"].iloc[-1]) > float(candles["close"].iloc[-2])
-
+        price_breakout  = float(candles["close"].iloc[-1]) > float(candles["close"].iloc[-2])
         price_breakdown = float(candles["close"].iloc[-1]) < float(candles["close"].iloc[-2])
-        put_oi_buildup = put_oi > prev_put_oi * (1 + threshold)
-        call_oi_unwind = call_oi < prev_call_oi * (1 - threshold)
 
-        if call_oi_buildup and put_oi_unwind and price_breakout:
+        # CALL signal: call OI building up OR put OI unwinding — with price confirmation
+        # (either leg alone is sufficient for daily EOD data; intraday data may show both)
+        if (call_oi_buildup or put_oi_unwind) and price_breakout and not put_oi_buildup:
             return StrategySignal(
                 fired=True,
                 direction="CALL",
                 points=self.max_points,
                 reason=self.name,
-                details={"call_oi_change": round(call_oi / prev_call_oi - 1, 3)},
+                details={
+                    "call_oi_change": round(call_oi / prev_call_oi - 1, 3),
+                    "put_oi_change":  round(put_oi  / prev_put_oi  - 1, 3),
+                },
             )
 
-        if put_oi_buildup and call_oi_unwind and price_breakdown:
+        # PUT signal: put OI building up OR call OI unwinding — with price confirmation
+        if (put_oi_buildup or call_oi_unwind) and price_breakdown and not call_oi_buildup:
             return StrategySignal(
                 fired=True,
                 direction="PUT",
                 points=self.max_points,
                 reason=self.name,
-                details={"put_oi_change": round(put_oi / prev_put_oi - 1, 3)},
+                details={
+                    "call_oi_change": round(call_oi / prev_call_oi - 1, 3),
+                    "put_oi_change":  round(put_oi  / prev_put_oi  - 1, 3),
+                },
             )
 
         return StrategySignal(fired=False, direction=None, points=0, reason=self.name)
