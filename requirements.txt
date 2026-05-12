@@ -40,3 +40,10 @@ structlog==24.1.0
 pytest==8.2.0
 pytest-asyncio==0.23.6
 claude-agent-sdk
+
+# Phase 5 — ML data + training
+yfinance
+pyarrow
+xgboost
+lightgbm
+scikit-learn
