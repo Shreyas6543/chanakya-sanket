@@ -3,7 +3,7 @@ import structlog
 from datetime import datetime
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
@@ -598,6 +598,40 @@ async def mark_signal_sold(signal_id: int):
         await session.commit()
 
     return {"ok": True, "signal_id": signal_id, "state": "USER_CLOSED"}
+
+
+# ── Claude AI Analyst ─────────────────────────────────────────────────────────
+
+@app.post("/api/ai/analyze")
+async def ai_analyze(body: dict):
+    """
+    Stream a Claude analysis of the current dashboard data.
+    Body: { question: str, context: { overview, by_symbol, by_direction, signals, filters } }
+    Returns: text/event-stream — each event is a text chunk, ends with [DONE].
+    """
+    from app.ai.claude_analyst import stream_analysis
+
+    question = (body.get("question") or "").strip()
+    context = body.get("context") or {}
+
+    if not question:
+        async def empty():
+            yield "data: Please enter a question.\n\n"
+            yield "data: [DONE]\n\n"
+        return StreamingResponse(empty(), media_type="text/event-stream")
+
+    async def generator():
+        try:
+            async for chunk in stream_analysis(question, context):
+                # SSE format: escape newlines inside a data field
+                escaped = chunk.replace("\n", "\ndata: ")
+                yield f"data: {escaped}\n\n"
+        except Exception as e:
+            yield f"data: Error: {e}\n\n"
+        finally:
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(generator(), media_type="text/event-stream")
 
 
 # ── Admin ─────────────────────────────────────────────────────────────────────

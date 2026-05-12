@@ -75,6 +75,9 @@ class Settings(BaseSettings):
     oi_buildup_threshold: float = 0.01    # 1% OI change — calibrated for real day-over-day NSE data
     vwap_tolerance_pct: float = 0.002     # Within 0.2% of VWAP = "near VWAP"
 
+    # Anthropic Claude API
+    anthropic_api_key: str = ""
+
     # Instruments to track
     instruments: str = "NSE_INDEX|Nifty 50,NSE_INDEX|Nifty Bank"
 

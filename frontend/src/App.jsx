@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import ClaudePanel from './components/ClaudePanel'
 
 const API = ''  // proxied to :8000 via vite.config.js
 
@@ -256,6 +257,11 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* Claude AI Analyst */}
+      <div className="mb-6">
+        <ClaudePanel dashboardData={data} />
+      </div>
 
       {/* Signal table */}
       {data && (
