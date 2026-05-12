@@ -6,21 +6,34 @@ settings = get_settings()
 
 def detect_regime(candles: pd.DataFrame, atr_period: int = 14, ma_period: int = 20) -> str:
     """
-    Detect market regime based on ATR relative to its moving average.
+    Detect market regime using ATR + CPR (Central Pivot Range).
 
     Returns: 'TRENDING' or 'SIDEWAYS'
 
-    Rule: If current ATR < (atr_sideways_threshold * MA of ATR) → SIDEWAYS
-    Default threshold: 0.70 (configurable via ATR_SIDEWAYS_THRESHOLD in .env)
+    Rules:
+    1. CPR narrow (< 0.15% of pivot): prior day was indecisive → SIDEWAYS
+       (Zerodha Varsity: narrow CPR = expect range-bound day)
+    2. ATR < threshold × ATR_MA: low volatility → SIDEWAYS
+    3. Either condition alone is sufficient to call SIDEWAYS.
+       Both trending = TRENDING.
     """
     if len(candles) < ma_period + atr_period:
-        return "TRENDING"  # Default to trending if insufficient data
+        return "TRENDING"
 
+    # --- CPR regime check ---
+    try:
+        from app.indicators.cpr import calculate_cpr
+        cpr = calculate_cpr(candles)
+        if cpr is not None and cpr.is_narrow:
+            return "SIDEWAYS"
+    except Exception:
+        pass  # CPR unavailable — fall through to ATR check
+
+    # --- ATR regime check ---
     high = candles["high"]
     low = candles["low"]
     close = candles["close"]
 
-    # True Range
     tr = pd.concat([
         high - low,
         (high - close.shift(1)).abs(),

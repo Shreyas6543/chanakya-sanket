@@ -93,6 +93,38 @@
 
 ---
 
+### [2026-05-12] CPR added to regime detection
+- **What changed**: `app/indicators/cpr.py` added. `regime.py` now checks CPR width first — narrow CPR (<0.15% of pivot) = SIDEWAYS, suppresses breakout strategies. Falls back to ATR check if CPR unavailable.
+- **Why**: Zerodha Varsity CPR chapter — narrow CPR means prior day was range-bound, expect same today. More reliable than ATR alone for intraday regime.
+- **Result**: Pending backtest
+- **Status**: KEPT
+
+---
+
+### [2026-05-12] Strike selector — direction-aware OTM, capped at 1 OTM
+- **What changed**: `strike_selector.py` `select_strike()` now takes `direction` param. CALL OTM = ATM + interval (higher strike). PUT OTM = ATM - interval (lower strike). 2 OTM removed — intraday delta too low (<0.3), poor liquidity.
+- **Why**: Bug — was always adding interval regardless of direction (PUT OTM should go DOWN). Also Zerodha delta chapter: 2 OTM delta <0.3, too unresponsive for intraday directional trades.
+- **Result**: Fixes PUT strike selection bug
+- **Status**: KEPT
+
+---
+
+### [2026-05-12] Expiry min days bumped from 2 → 3
+- **What changed**: `config.py` `expiry_min_days`: 2 → 3
+- **Why**: Zerodha Theta chapter — decay accelerates exponentially in final days. Buying options within 2 days of expiry puts theta heavily against the buyer.
+- **Result**: Will switch to next week's expiry earlier
+- **Status**: KEPT
+
+---
+
+### [2026-05-12] RSI stuck overbought/oversold = continuation signal
+- **What changed**: `rsi_momentum.py` — if RSI has been above 70 for 5+ consecutive candles (stuck overbought), fire CALL signal even without a fresh crossover. Same logic for stuck oversold (<30) → PUT.
+- **Why**: Zerodha Varsity RSI chapter — "stuck overbought means excess positive momentum sustaining the trend, look for buying not selling". Previously only crossover above 55 triggered signal.
+- **Result**: Pending backtest
+- **Status**: KEPT
+
+---
+
 ### [2026-05-12] OI strategy — differentiated points by scenario strength
 - **What changed**: `oi_buildup.py` — long buildup and short buildup (new money entering) keep full 25 pts. Short covering and long unwinding (exits only, no new money) reduced to 12 pts (max_points // 2).
 - **Why**: Verified across Zerodha Varsity, StockEdge, TradeJini, Quora — all confirm long/short buildup are structurally stronger than covering/unwinding. Short covering = "pain-driven buying, not conviction". Previously all 4 scenarios awarded equal points.

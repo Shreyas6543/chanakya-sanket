@@ -96,7 +96,7 @@ async def generate_signal(
         )
         return None
 
-    strike = select_strike(spot_price, symbol, confidence.score)
+    strike = select_strike(spot_price, symbol, confidence.score, confidence.direction)
     expiry = select_expiry(symbol)
 
     # Entry, SL, Target

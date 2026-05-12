@@ -55,7 +55,7 @@ class Settings(BaseSettings):
     banknifty_strike_interval: int = 100
 
     # Expiry selection — switch to next expiry if days remaining <= this
-    expiry_min_days: int = 2
+    expiry_min_days: int = 3
 
     # Option premium estimation (used until live options chain available)
     premium_atr_multiplier: float = 1.2   # estimated_premium = ATR * this
