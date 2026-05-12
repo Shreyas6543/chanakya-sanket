@@ -57,47 +57,68 @@ def _upstox_token() -> str | None:
 def fetch_upstox_chunk(symbol: str, from_date: date, to_date: date, token: str) -> pd.DataFrame | None:
     """
     Upstox v2 historical candle API.
-    Max range per call: 1 year. Returns 5-min candles.
+    Supports: 1minute, 30minute, day, week, month (NOT 5minute).
+    We fetch 1-minute candles and resample to 5-minute.
+    Max date range per call: ~1 month for 1-min data.
     """
     instrument = UPSTOX_INSTRUMENTS[symbol]
     url = (
         f"https://api.upstox.com/v2/historical-candle"
         f"/{requests.utils.quote(instrument, safe='')}"
-        f"/5minute/{to_date.isoformat()}/{from_date.isoformat()}"
+        f"/1minute/{to_date.isoformat()}/{from_date.isoformat()}"
     )
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept": "application/json",
     }
     try:
-        resp = requests.get(url, headers=headers, timeout=20)
+        resp = requests.get(url, headers=headers, timeout=30)
         if resp.status_code != 200:
+            print(f"    Upstox {resp.status_code}: {resp.text[:200]}")
             return None
         candles = resp.json().get("data", {}).get("candles", [])
         if not candles:
             return None
         df = pd.DataFrame(candles, columns=["timestamp", "open", "high", "low", "close", "volume", "oi"])
-        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
         df = df[["timestamp", "open", "high", "low", "close", "volume"]].sort_values("timestamp")
-        df["symbol"] = symbol
-        return df
+
+        # Resample 1-min → 5-min (market open aligned to 9:15 IST)
+        df = df.set_index("timestamp")
+        df5 = df.resample("5min", closed="left", label="left").agg({
+            "open":   "first",
+            "high":   "max",
+            "low":    "min",
+            "close":  "last",
+            "volume": "sum",
+        }).dropna(subset=["open"])
+        df5 = df5.reset_index()
+        df5["symbol"] = symbol
+        return df5
     except Exception as e:
         print(f"    Upstox error: {e}")
         return None
 
 
 def fetch_upstox(symbol: str, start: date, end: date, token: str) -> pd.DataFrame:
-    """Fetch Upstox in ≤1-year chunks."""
+    """Fetch Upstox 1-min data in monthly chunks, resample to 5-min."""
     chunks = []
     chunk_start = start
     while chunk_start <= end:
-        chunk_end = min(date(chunk_start.year + 1, chunk_start.month, chunk_start.day) - timedelta(days=1), end)
-        print(f"    Upstox chunk: {chunk_start} → {chunk_end}")
+        # Monthly chunks — safe for 1-min data
+        if chunk_start.month == 12:
+            chunk_end = min(date(chunk_start.year + 1, 1, 1) - timedelta(days=1), end)
+        else:
+            chunk_end = min(date(chunk_start.year, chunk_start.month + 1, 1) - timedelta(days=1), end)
+        print(f"    chunk: {chunk_start} → {chunk_end}", end="  ")
         df = fetch_upstox_chunk(symbol, chunk_start, chunk_end, token)
         if df is not None and not df.empty:
+            print(f"{len(df)} bars")
             chunks.append(df)
+        else:
+            print("no data")
         chunk_start = chunk_end + timedelta(days=1)
-        time.sleep(0.5)
+        time.sleep(0.3)
     return pd.concat(chunks).drop_duplicates("timestamp") if chunks else pd.DataFrame()
 
 
