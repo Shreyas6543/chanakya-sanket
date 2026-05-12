@@ -19,7 +19,8 @@ from app.signals.lifecycle import expire_eod_signals, get_open_signal_count
 from app.alerts.telegram import send_signal_alert, send_text_alert
 from app.analytics.engine import get_overall_stats
 from app.utils.market_hours import is_market_open, can_generate_signals
-from app.db.models import Signal, SignalState
+from app.utils.oi_toggle import is_oi_enabled
+from app.db.models import Signal, SignalState, MarketRegime, MarketSnapshot
 from sqlalchemy import select
 
 logger = structlog.get_logger()
@@ -68,10 +69,11 @@ async def run_signal_engine():
                                 consecutive_losses=_consecutive_losses[symbol])
                     continue
 
+                oi_enabled = await is_oi_enabled()
                 if USE_MOCK:
                     generate_mock_candles(symbol, n=5)  # Add 5 new mock candles
                     spot_price = get_mock_spot_price(symbol)
-                    oi_data = get_mock_oi_data(symbol)
+                    oi_data = get_mock_oi_data(symbol) if oi_enabled else None
                 else:
                     from app.market_data.websocket_client import get_live_price
                     from app.market_data.options_chain import fetch_options_chain
@@ -81,7 +83,7 @@ async def run_signal_engine():
                         logger.warning("No live price yet — WebSocket not ready", symbol=symbol)
                         continue
                     expiry = select_expiry(symbol)
-                    oi_data = await fetch_options_chain(symbol, expiry)
+                    oi_data = await fetch_options_chain(symbol, expiry) if oi_enabled else None
 
                 candles = get_candles(symbol, limit=100)
                 if len(candles) < 20:
@@ -242,6 +244,54 @@ async def morning_startup_job():
     )
 
 
+async def save_oi_snapshot_job():
+    """
+    Runs every 5 minutes during market hours (live mode only).
+    Fetches Upstox options chain OI for each symbol and persists to market_snapshots.
+    This builds a historical intraday OI dataset over time for future backtest use.
+    """
+    if USE_MOCK:
+        return
+    if not can_generate_signals():
+        return
+
+    from app.market_data.websocket_client import get_live_price
+    from app.market_data.options_chain import fetch_options_chain
+    from app.signals.strike_selector import select_expiry
+    from app.utils.regime import detect_regime
+    from app.market_data.candle_processor import get_candles
+    from datetime import datetime, timezone
+
+    async with AsyncSessionLocal() as session:
+        for symbol in ["NIFTY", "BANKNIFTY"]:
+            try:
+                spot_price = get_live_price(symbol)
+                if not spot_price:
+                    continue
+                expiry = select_expiry(symbol)
+                oi_data = await fetch_options_chain(symbol, expiry)
+                if not oi_data:
+                    continue
+
+                candles = get_candles(symbol, limit=100)
+                regime = detect_regime(candles) if len(candles) >= 20 else "TRENDING"
+
+                snapshot = MarketSnapshot(
+                    symbol=symbol,
+                    price=spot_price,
+                    call_oi=oi_data.get("call_oi"),
+                    put_oi=oi_data.get("put_oi"),
+                    regime=MarketRegime(regime),
+                    timestamp=datetime.now(timezone.utc),
+                )
+                session.add(snapshot)
+                logger.debug("OI snapshot saved", symbol=symbol,
+                             call_oi=oi_data.get("call_oi"), put_oi=oi_data.get("put_oi"))
+            except Exception as e:
+                logger.error("OI snapshot save failed", symbol=symbol, error=str(e))
+        await session.commit()
+
+
 def create_scheduler() -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone="Asia/Kolkata")
 
@@ -332,6 +382,22 @@ def create_scheduler() -> AsyncIOScheduler:
         ),
         id="eod_expire",
         name="EOD Signal Expiry",
+    )
+
+    # OI snapshot — every 5 minutes during market hours (live mode only)
+    # Builds a historical intraday OI dataset in market_snapshots for future backtest use.
+    scheduler.add_job(
+        save_oi_snapshot_job,
+        CronTrigger(
+            day_of_week="mon-fri",
+            hour="9-15",
+            minute="15,20,25,30,35,40,45,50,55,0,5,10",
+            timezone="Asia/Kolkata",
+        ),
+        id="oi_snapshot",
+        name="OI Snapshot",
+        max_instances=1,
+        coalesce=True,
     )
 
     return scheduler

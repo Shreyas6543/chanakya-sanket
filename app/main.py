@@ -379,6 +379,41 @@ async def analytics():
         }
 
 
+# ── Admin ─────────────────────────────────────────────────────────────────────
+
+@app.get("/admin/oi")
+async def admin_oi_status():
+    """Current OI strategy toggle status + snapshot count."""
+    from app.utils.oi_toggle import is_oi_enabled
+    from app.market_data.real_oi import oi_coverage_stats
+    from app.db.models import MarketSnapshot
+    from sqlalchemy import func
+    enabled = await is_oi_enabled()
+    async with AsyncSessionLocal() as session:
+        r = await session.execute(select(func.count()).select_from(MarketSnapshot))
+        snapshot_count = r.scalar()
+    return {
+        "oi_strategy_enabled": enabled,
+        "note": "ON = NSE Bhavcopy OI used in backfill; live Upstox OI used in live mode. OFF = OI skipped (price action only).",
+        "nse_bhavcopy_days": oi_coverage_stats(),
+        "intraday_snapshots_stored": snapshot_count,
+    }
+
+
+@app.post("/admin/oi/enable")
+async def admin_oi_enable():
+    from app.utils.oi_toggle import set_oi_enabled
+    await set_oi_enabled(True)
+    return {"oi_strategy_enabled": True, "message": "OI strategy enabled. Backfill will use NSE Bhavcopy OI. Live mode uses Upstox options chain."}
+
+
+@app.post("/admin/oi/disable")
+async def admin_oi_disable():
+    from app.utils.oi_toggle import set_oi_enabled
+    await set_oi_enabled(False)
+    return {"oi_strategy_enabled": False, "message": "OI strategy disabled. Price action only (VWAP + RSI + ORB)."}
+
+
 # ── Manual Triggers (for testing) ─────────────────────────────────────────────
 
 @app.post("/trigger/signal-engine")
@@ -598,9 +633,11 @@ async def _simulate_one_day(
             window = candles_full.iloc[:window_end].copy()
             spot_price = float(window["close"].iloc[-1])
             _vwap_val = float(_calc_vwap(window).iloc[-1])
-            # OI strategy skipped in backfill — EOD OI has wrong granularity for intraday signals.
-            # Real intraday OI (Upstox options chain) only available in live mode.
-            oi_data = None
+            # OI in backfill uses NSE Bhavcopy EOD data (real_oi.py).
+            # Toggled on/off via /admin/oi — default OFF since EOD OI has wrong granularity.
+            from app.utils.oi_toggle import is_oi_enabled
+            from app.market_data.real_oi import get_real_oi_data
+            oi_data = get_real_oi_data(symbol, sim_date) if await is_oi_enabled() else None
             sentiment = get_symbol_sentiment(symbol, _latest_news)
             expiry = select_expiry(symbol, reference_date=sim_date)
 

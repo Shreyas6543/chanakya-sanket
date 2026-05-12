@@ -157,6 +157,14 @@
 
 ---
 
+### [2026-05-12] OI toggle + intraday snapshot persistence
+- **What changed**: `app/utils/oi_toggle.py` — Redis key `oi_strategy_enabled` (default OFF). `scheduler.py` — `save_oi_snapshot_job` saves Upstox options chain OI to `market_snapshots` every 5 min during live market hours. `main.py _simulate_one_day` — when OI toggle ON, uses NSE Bhavcopy OI (`real_oi.py`). Admin endpoints: `GET /admin/oi`, `POST /admin/oi/enable`, `POST /admin/oi/disable`.
+- **Why**: OI data was never being persisted to DB. Now every live 5-min cycle stores call_oi + put_oi. Admin toggle lets you switch OI on/off without a restart to test its impact.
+- **Result**: OI default kept OFF (price action baseline = 42.6% WR). Toggle ON to test EOD OI impact or accumulate intraday OI history.
+- **Status**: KEPT
+
+---
+
 ### [2026-05-12] Starlette downgrade to 0.37.2 (infra fix)
 - **What changed**: `starlette` downgraded from 1.0.0 (claude-agent-sdk bumped it) back to 0.37.2 (FastAPI 0.111 requires ~0.37)
 - **Why**: claude-agent-sdk install silently upgraded Starlette, breaking FastAPI's Router init
