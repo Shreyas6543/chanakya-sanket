@@ -3,14 +3,15 @@
 ## RULES FOR CLAUDE (READ FIRST)
 1. **Update this file immediately** after every decision, config change, module addition, or architecture change. This is the single source of truth.
 2. **Read this entire file before touching any code.** Never make assumptions — check here first.
-3. **Never commit `.env`**. It contains live secrets.
-4. **Never add auto-trading logic.** The system only generates signals. Humans execute.
-5. **Never add ML** until Phase 5 is explicitly started.
-6. **Always run in the project venv**: `.venv/bin/python3` and `.venv/bin/uvicorn`. Never use system Python.
-7. **Always use `make` commands** for dev workflow. See the Makefile section below.
-8. **After every code change**, commit and push to GitHub using conventional commit messages.
-9. **Before suggesting architecture changes**, check if a simpler fix exists first.
-10. **The DB already has real data**. Never drop tables or run destructive migrations without explicit user approval.
+3. **Before changing ANY strategy logic, indicator, confidence scoring, or signal rule** — read `LOGIC_CHANGELOG.md` first. If the change was already tried and reverted, do NOT make it again without explicit user approval. After making a logic change, add an entry to `LOGIC_CHANGELOG.md` immediately.
+4. **Never commit `.env`**. It contains live secrets.
+5. **Never add auto-trading logic.** The system only generates signals. Humans execute.
+6. **Never add ML** until Phase 5 is explicitly started.
+7. **Always run in the project venv**: `.venv/bin/python3` and `.venv/bin/uvicorn`. Never use system Python.
+8. **Always use `make` commands** for dev workflow. See the Makefile section below.
+9. **After every code change**, commit and push to GitHub using conventional commit messages.
+10. **Before suggesting architecture changes**, check if a simpler fix exists first.
+11. **The DB already has real data**. Never drop tables or run destructive migrations without explicit user approval.
 
 ---
 
