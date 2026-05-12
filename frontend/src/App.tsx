@@ -1,5 +1,8 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import ClaudePanel from './components/ClaudePanel'
+import EquityCurve from './components/EquityCurve'
+import MonthlyBreakdown from './components/MonthlyBreakdown'
+import LivePrices from './components/LivePrices'
 import type {
   DashboardData, Signal, SignalState, Source,
   SymbolFilter, DirFilter, OutcomeFilter, SourceFilter, ByHour, ByCombo,
@@ -218,9 +221,14 @@ export default function App() {
     <div className="min-h-screen bg-gray-950 text-gray-100 p-6 max-w-screen-2xl mx-auto">
 
       {/* Header */}
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-white">Chanakya Sanket</h1>
-        <p className="text-gray-500 text-sm">Trading Intelligence Dashboard</p>
+      <div className="flex flex-wrap items-start justify-between gap-4 mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-white">Chanakya Sanket</h1>
+          <p className="text-gray-500 text-sm">Trading Intelligence Dashboard</p>
+        </div>
+        <div className="flex-1 min-w-0 max-w-xl">
+          <LivePrices />
+        </div>
       </div>
 
       {/* Filters */}
@@ -296,6 +304,14 @@ export default function App() {
             value={`₹${(ov.total_pnl ?? 0).toLocaleString('en-IN')}`}
             color={(ov.total_pnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}
           />
+        </div>
+      )}
+
+      {/* Equity Curve + Monthly Breakdown */}
+      {data && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+          <EquityCurve signals={signals} />
+          <MonthlyBreakdown signals={signals} />
         </div>
       )}
 
