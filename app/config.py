@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     risk_per_trade_pct: float = 1.5           # Risk (SL distance) as % of capital
     max_daily_loss_pct: float = 5.0
     max_open_signals_per_symbol: int = 2
-    min_confidence_score: int = 35
+    min_confidence_score: int = 60
 
     # ATR regime threshold (fraction of 20-period average)
     atr_sideways_threshold: float = 0.70

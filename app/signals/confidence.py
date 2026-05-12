@@ -48,14 +48,31 @@ def calculate_confidence(
         s.reason: (overrides.get(s.reason) if overrides.get(s.reason) is not None else s.points)
         for s in fired
     }
-    score = sum(reasons.values())
+    raw_score = sum(reasons.values())
 
     # Sentiment bonus
     if sentiment_label == "BULLISH" and direction == "CALL":
         reasons["positive_sentiment"] = settings.points_positive_sentiment
-        score += settings.points_positive_sentiment
+        raw_score += settings.points_positive_sentiment
     elif sentiment_label == "BEARISH" and direction == "PUT":
         reasons["negative_sentiment"] = settings.points_positive_sentiment
-        score += settings.points_positive_sentiment
+        raw_score += settings.points_positive_sentiment
+
+    # Normalize score to 0-100 based on max possible from available strategies.
+    # This keeps the threshold (min_confidence=60) meaningful regardless of which
+    # strategies are available — e.g. no OI in backfill vs live OI available.
+    max_possible = (
+        settings.points_vwap_breakout +
+        settings.points_rsi_momentum +
+        settings.points_opening_range +
+        settings.points_oi_buildup +
+        settings.points_positive_sentiment
+    )
+    # If OI strategy was not in the evaluated list (oi_data=None), exclude it from max
+    strategy_names = {s.reason for s in strategy_signals}
+    if "oi_buildup" not in strategy_names:
+        max_possible -= settings.points_oi_buildup
+
+    score = round(raw_score / max_possible * 100) if max_possible > 0 else 0
 
     return ConfidenceResult(score=score, reasons=reasons, direction=direction)
