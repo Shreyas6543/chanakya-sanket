@@ -303,9 +303,10 @@ candles
 **Note:** BullishEngulfing strategy removed — backtested at 14.3% WR vs 33.3% break-even.
 
 **Confidence normalization (confidence.py):**
-Score is normalized to 0-100 as `raw_score / max_possible × 100`. Max possible excludes OI when `oi_data=None`. This keeps the 60-point threshold meaningful regardless of mode:
-- Backfill (no OI, max=55pts): all 3 strategies → score=83, 2 strategies → score=58 (doesn't fire)
-- Live (with OI, max=75pts): all 4 strategies → score=100, 3 strategies → score=67
+Score is normalized to 0-100 as `raw_score / max_possible × 100`. Max possible is computed from only the strategies actually evaluated (in `strategy_signals`) and sentiment only when `sentiment_label is not None`. At least 2 strategies must agree or signal is blocked. This keeps the 60-point threshold meaningful regardless of mode:
+- Backfill (VWAP+RSI+ORB evaluated, max=50): RSI+ORB (30pts) = 60% → fires; VWAP+RSI (35pts) = 70% → fires
+- Live (all 4 + possible sentiment, max=75): needs 45pts = 3 price-action strategies
+- SIDEWAYS (only RSI available, no OI): RSI alone = 1 strategy → blocked (min 2 required)
 
 **OI strategy behaviour by mode:**
 - **Backfill/historical**: `oi_data=None` — OI strategy skipped entirely. EOD day-over-day OI has wrong granularity for intraday signals and was found to hurt WR (31.9% vs 36.5% without it).
@@ -329,9 +330,10 @@ Score is normalized to 0-100 as `raw_score / max_possible × 100`. Max possible 
 |---|---|---|---|
 | Fake OI (old baseline) | 562 | 44.8% | OI always aligned with price — circular, not real |
 | Real NSE EOD OI | 150 | 31.9% | EOD day-over-day OI disagrees with price → adds noise |
-| **No OI (price action only)** | **97** | **36.5%** | **Honest baseline — above break-even** |
+| No OI (old normalization bug) | 97 | 36.5% | max_possible included unavailable sentiment+strategies → fewer signals |
+| **No OI (corrected normalization)** | **364** | **44.8%** | **Honest baseline — min 2 strategies, correct max_possible** |
 
-**Conclusion:** Real NSE EOD OI data has wrong granularity for intraday signals. Fake OI was just confirming price direction, not adding new information. Genuine edge = price action (VWAP + RSI + ORB) = **36.5% WR** above 33.3% break-even.
+**Conclusion:** Real NSE EOD OI data has wrong granularity for intraday signals. The old 97-signal baseline had a normalization bug where sentiment (10pts) and un-evaluated strategies inflated max_possible, blocking signals. With correct normalization: 364 signals at **44.8% honest WR** (wins / (wins+losses+expired)) — strong edge above 33.3% break-even.
 
 True OI value will only be known once live Upstox intraday options chain data accumulates.
 
@@ -341,9 +343,9 @@ True OI value will only be known once live Upstox intraday options chain data ac
 - **Module**: `app/market_data/real_oi.py` — loads day-over-day OI for signal_context PCR
 - **Not used for strategy evaluation** — only for signal_context enrichment (PCR column)
 
-### Honest backtest baseline (price action only, no OI)
-**97 signals, 36.5% WR, Nov 2025 – May 2026**
-Config: VWAP=20, RSI=15, ORB=15, OI=skipped, min_confidence=35
+### Honest backtest baseline (price action only, no OI, correct normalization)
+**364 signals, 44.8% WR, Nov 2025 – May 2026**
+163 wins, 156 losses, 45 expired. Config: VWAP=20, RSI=15, ORB=15, OI=skipped, min_confidence=60 (normalized, min 2 strategies)
 
 ### Monthly WR breakdown (price action only)
 | Month | WR | Notes |
