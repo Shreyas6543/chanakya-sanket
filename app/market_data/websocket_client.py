@@ -13,6 +13,29 @@ from app.market_data.candle_processor import process_tick
 logger = structlog.get_logger()
 settings = get_settings()
 
+
+async def _save_candle_to_db(symbol: str, candle: dict):
+    """Persist a finalized live candle to the DB so restarts can recover it."""
+    try:
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+        from app.db.database import AsyncSessionLocal
+        from app.db.models import Candle
+        async with AsyncSessionLocal() as session:
+            stmt = pg_insert(Candle).values(
+                symbol=symbol,
+                timeframe="5m",
+                open=candle["open"],
+                high=candle["high"],
+                low=candle["low"],
+                close=candle["close"],
+                volume=candle["volume"],
+                timestamp=candle["timestamp"],
+            ).on_conflict_do_nothing()
+            await session.execute(stmt)
+            await session.commit()
+    except Exception as e:
+        logger.warning("Failed to persist candle to DB", symbol=symbol, error=str(e))
+
 # Upstox v3 WebSocket URL (v2 is deprecated)
 UPSTOX_WS_URL = "wss://api.upstox.com/v3/feed/market-data-feed"
 
@@ -103,7 +126,9 @@ class UpstoxWebSocketClient:
                 price = ltpc.get("ltp")
                 if price:
                     LIVE_PRICES[symbol] = float(price)
-                    process_tick(symbol, float(price), 0.0, ts)
+                    finalized = process_tick(symbol, float(price), 0.0, ts)
+                    if finalized:
+                        asyncio.create_task(_save_candle_to_db(symbol, finalized))
 
         except Exception as e:
             logger.debug("Failed to parse WebSocket message", error=str(e))

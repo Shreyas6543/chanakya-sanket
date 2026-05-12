@@ -47,3 +47,10 @@ async def create_tables():
                 "ALTER TABLE signals ADD COLUMN IF NOT EXISTS signal_context JSONB"
             )
         )
+        # Unique constraint on candles to prevent duplicate live candle saves on restart
+        await conn.execute(
+            __import__("sqlalchemy").text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_candles_symbol_timeframe_ts "
+                "ON candles (symbol, timeframe, timestamp)"
+            )
+        )

@@ -210,6 +210,7 @@ Every signal in the DB has a `source` column:
 - Live prices stored in `LIVE_PRICES` dict in `websocket_client.py`, read via `get_live_price(symbol)`
 - Auto-reconnects every 5 seconds on disconnect
 - Started as `asyncio.create_task(ws_client.connect())` in FastAPI lifespan
+- **Candle persistence**: `process_tick` returns finalized candle dict when a 5-min window closes; `_save_candle_to_db` immediately persists it to `candles` table via `INSERT ... ON CONFLICT DO NOTHING`
 
 ---
 
@@ -251,7 +252,9 @@ candles
   id, symbol, timeframe, open, high, low, close, volume, timestamp
 ```
 
-**DB migrations**: handled in `database.py → create_tables()` using `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`. No Alembic. Always use this pattern for schema changes on existing tables.
+**DB migrations**: handled in `database.py → create_tables()` using `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` and `CREATE UNIQUE INDEX IF NOT EXISTS`. No Alembic. Always use this pattern for schema changes on existing tables.
+
+**Candle persistence**: Live 5-minute candles are written to the `candles` table as they close. Unique index `uq_candles_symbol_timeframe_ts` on `(symbol, timeframe, timestamp)` prevents duplicates. On server restart, today's candles are loaded from DB first (no network call), then previous days are fetched from Upstox API.
 
 ---
 
@@ -443,6 +446,7 @@ Re-authenticate every morning: open http://localhost:8000/auth/login in browser.
 - [x] Backfill endpoint with full grid-search parameter overrides
 - [x] Upstox token active — system running in live mode
 - [x] Candle seeding fixed — seeds 3 previous weekdays + today on startup (80+ candles ready from minute 1)
+- [x] Live candle persistence — every finalized 5m candle saved to DB; restart recovers today's candles from DB instantly
 - [x] Confidence normalized to 0-100 based on available strategies — threshold stays at 60 in all modes
 - [ ] Accumulate 50–100 real live signals (with real intraday OI from Upstox)
 - [ ] Analyse by_hour + by_strategy_combo once 50+ live signals collected

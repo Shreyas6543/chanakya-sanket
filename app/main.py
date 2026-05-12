@@ -43,26 +43,59 @@ async def lifespan(app: FastAPI):
             ))
 
     if settings.upstox_access_token:
-        logger.info("Live mode — seeding candles from Upstox history")
+        logger.info("Live mode — seeding candles")
         from app.market_data.historical import fetch_historical_candles
         from app.market_data.candle_processor import seed_candles
         from app.utils.market_hours import now_ist
-        from datetime import timedelta
+        from app.db.models import Candle as CandleModel
+        from sqlalchemy import select as sa_select
+        from datetime import timedelta, timezone, time as dt_time
+        import pandas as pd
         today = now_ist().date()
+        today_start = datetime.combine(today, dt_time.min).replace(tzinfo=timezone.utc)
         for symbol in ["NIFTY", "BANKNIFTY"]:
-            # Seed previous trading days first (up to 3 days back) to build history,
-            # then today — ensures 20+ candles available from the first signal run.
             all_candles = []
-            for days_back in [3, 2, 1, 0]:
+
+            # 1. Load today's intraday candles from DB — survives mid-session restarts
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(
+                    sa_select(CandleModel)
+                    .where(
+                        CandleModel.symbol == symbol,
+                        CandleModel.timeframe == "5m",
+                        CandleModel.timestamp >= today_start,
+                    )
+                    .order_by(CandleModel.timestamp)
+                )
+                db_candles = result.scalars().all()
+            if db_candles:
+                df_today = pd.DataFrame([{
+                    "timestamp": c.timestamp, "open": c.open, "high": c.high,
+                    "low": c.low, "close": c.close, "volume": c.volume,
+                } for c in db_candles])
+                all_candles.append(df_today)
+                logger.info("Loaded today's candles from DB", symbol=symbol, count=len(db_candles))
+
+            # 2. Previous trading days from Upstox API for indicator history (RSI, EMA, ATR)
+            for days_back in [3, 2, 1]:
                 d = today - timedelta(days=days_back)
                 if d.weekday() >= 5:  # skip weekends
                     continue
                 df = await fetch_historical_candles(symbol, d)
                 if not df.empty:
                     all_candles.append(df)
+
+            # 3. If no DB candles for today, fall back to Upstox intraday API
+            if not db_candles:
+                df_today_api = await fetch_historical_candles(symbol, today)
+                if not df_today_api.empty:
+                    all_candles.append(df_today_api)
+
             if all_candles:
-                import pandas as pd
                 combined = pd.concat(all_candles, ignore_index=True)
+                combined = (combined.sort_values("timestamp")
+                            .drop_duplicates(subset=["timestamp"])
+                            .reset_index(drop=True))
                 seed_candles(symbol, combined)
             else:
                 logger.warning("No historical candles found — buffer empty", symbol=symbol)
@@ -97,6 +130,62 @@ async def health():
         "status": "ok",
         "env": settings.env,
         "mode": "mock" if not settings.upstox_access_token else "live",
+    }
+
+
+@app.get("/debug/live-prices")
+async def debug_live_prices():
+    from app.market_data.websocket_client import LIVE_PRICES
+    return {"live_prices": LIVE_PRICES}
+
+
+@app.get("/debug/real-strategies/{symbol}")
+async def debug_real_strategies(symbol: str = "NIFTY"):
+    """Evaluate strategies on real candle data (not mock)."""
+    from app.market_data.candle_processor import get_candles
+    from app.market_data.websocket_client import get_live_price
+    from app.strategies.vwap_breakout import VWAPBreakoutStrategy
+    from app.strategies.rsi_momentum import RSIMomentumStrategy
+    from app.strategies.opening_range import OpeningRangeBreakoutStrategy
+    from app.signals.confidence import calculate_confidence
+    from app.utils.regime import detect_regime
+    from app.indicators.rsi import calculate_rsi
+    from app.indicators.vwap import calculate_vwap
+
+    candles = get_candles(symbol, limit=100)
+    if len(candles) < 20:
+        return {"symbol": symbol, "candle_count": len(candles), "error": "Insufficient candles"}
+
+    regime = detect_regime(candles)
+    rsi = calculate_rsi(candles["close"])
+    vwap = calculate_vwap(candles)
+    last_close = float(candles["close"].iloc[-1])
+    last_vwap = float(vwap.iloc[-1])
+
+    strategies = [VWAPBreakoutStrategy(), RSIMomentumStrategy(), OpeningRangeBreakoutStrategy()]
+    strategy_signals = []
+    results = []
+    for s in strategies:
+        sig = s.evaluate(candles)
+        strategy_signals.append(sig)
+        results.append({"strategy": s.name, "fired": sig.fired, "direction": sig.direction,
+                        "points": sig.points, "details": sig.details})
+
+    confidence = calculate_confidence(strategy_signals)
+    return {
+        "symbol": symbol,
+        "candle_count": len(candles),
+        "spot_price": get_live_price(symbol),
+        "last_close": round(last_close, 2),
+        "last_vwap": round(last_vwap, 2),
+        "vwap_diff_pct": round((last_close - last_vwap) / last_vwap * 100, 3),
+        "rsi_last": round(float(rsi.iloc[-1]), 2) if not rsi.empty else None,
+        "rsi_prev": round(float(rsi.iloc[-2]), 2) if len(rsi) > 1 else None,
+        "regime": regime,
+        "strategies": results,
+        "confidence": {"score": confidence.score, "direction": confidence.direction, "reasons": confidence.reasons},
+        "min_required": settings.min_confidence_score,
+        "would_fire": confidence.score >= settings.min_confidence_score,
     }
 
 

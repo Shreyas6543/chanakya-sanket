@@ -10,10 +10,11 @@ _candle_buffer: dict[str, list[dict]] = defaultdict(list)
 _current_candle: dict[str, dict] = {}
 
 
-def process_tick(symbol: str, price: float, volume: float, timestamp: datetime):
+def process_tick(symbol: str, price: float, volume: float, timestamp: datetime) -> dict | None:
     """
     Aggregate ticks into 5-minute candles.
     Completes a candle when the 5-minute window rolls over.
+    Returns the finalized candle dict when a candle closes, else None.
     """
     candle_minute = timestamp.replace(second=0, microsecond=0)
     # Round down to 5-minute boundary
@@ -22,7 +23,7 @@ def process_tick(symbol: str, price: float, volume: float, timestamp: datetime):
 
     if symbol not in _current_candle:
         _current_candle[symbol] = _new_candle(candle_start, price, volume)
-        return
+        return None
 
     curr = _current_candle[symbol]
 
@@ -31,12 +32,14 @@ def process_tick(symbol: str, price: float, volume: float, timestamp: datetime):
         _candle_buffer[symbol].append(curr)
         logger.debug("Candle closed", symbol=symbol, candle=curr)
         _current_candle[symbol] = _new_candle(candle_start, price, volume)
+        return curr  # caller can persist this to DB
     else:
         # Update current candle
         curr["high"] = max(curr["high"], price)
         curr["low"] = min(curr["low"], price)
         curr["close"] = price
         curr["volume"] += volume
+        return None
 
 
 def _new_candle(timestamp: datetime, price: float, volume: float) -> dict:
