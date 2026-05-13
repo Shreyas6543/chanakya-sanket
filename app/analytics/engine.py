@@ -7,7 +7,11 @@ from app.db.models import Signal, SignalOutcome, StrategyResult, SignalState
 logger = structlog.get_logger()
 
 
-async def get_overall_stats(session: AsyncSession, for_date: date | None = None) -> dict:
+async def get_overall_stats(
+    session: AsyncSession,
+    for_date: date | None = None,
+    sources: list[str] | None = None,
+) -> dict:
     """Overall win rate and P&L summary. Pass for_date to scope to a single day."""
     q = (
         select(
@@ -21,6 +25,8 @@ async def get_overall_stats(session: AsyncSession, for_date: date | None = None)
     )
     if for_date is not None:
         q = q.where(func.date(Signal.created_at) == for_date)
+    if sources is not None:
+        q = q.where(Signal.source.in_(sources))
     result = await session.execute(q)
     row = result.first()
     total = row.total or 0
