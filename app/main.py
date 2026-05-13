@@ -1027,6 +1027,18 @@ async def _simulate_one_day(
                 break  # Circuit breaker tripped mid-symbol
 
             window = candles_full.iloc[:window_end].copy()
+
+            # Mirror the live 13:30 IST cutoff — generator.py uses now_ist() which
+            # is bypassed by force=True in backfill.  Apply it here against the
+            # candle's actual timestamp so backfill matches live behaviour exactly.
+            from datetime import timezone as _tz, timedelta as _td
+            _IST = _tz(_td(hours=5, minutes=30))
+            _last_ts = window["timestamp"].iloc[-1] if "timestamp" in window.columns else None
+            if _last_ts is not None and hasattr(_last_ts, "astimezone"):
+                _ts_ist = _last_ts.astimezone(_IST)
+                if _ts_ist.hour >= 14 or (_ts_ist.hour == 13 and _ts_ist.minute >= 30):
+                    continue  # Skip — live system would never generate a signal here
+
             spot_price = float(window["close"].iloc[-1])
             _vwap_val = float(_calc_vwap(window).iloc[-1])
             # OI in backfill uses NSE Bhavcopy EOD data (real_oi.py).
