@@ -210,8 +210,10 @@ async def expire_signals_job():
 
 
 async def get_eod_stats() -> dict:
+    from app.utils.market_hours import now_ist
+    today = now_ist().date()
     async with AsyncSessionLocal() as session:
-        return await get_overall_stats(session)
+        return await get_overall_stats(session, for_date=today)
 
 
 async def token_check_job():
