@@ -24,7 +24,9 @@ async def get_overall_stats(
         .join(Signal, SignalOutcome.signal_id == Signal.id)
     )
     if for_date is not None:
-        q = q.where(func.date(Signal.created_at) == for_date)
+        # created_at is stored as UTC; compare against IST date to catch signals
+        # generated early morning IST (e.g. 9:15 AM IST = 3:45 AM UTC = previous UTC date)
+        q = q.where(func.date(func.timezone("Asia/Kolkata", Signal.created_at)) == for_date)
     if sources is not None:
         q = q.where(Signal.source.in_(sources))
     result = await session.execute(q)
