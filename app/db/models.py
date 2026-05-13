@@ -80,8 +80,12 @@ class Signal(Base):
     source: Mapped[str] = mapped_column(String(10), default="live", nullable=False)
 
     # Signal context snapshot — market conditions at the exact moment the signal fired
-    # Keys: signal_time, hour, minute, rsi, vwap_distance_pct, atr, pcr, ce_oi, pe_oi, strategies_fired
+    # Keys: signal_time, hour, minute, rsi, vwap_distance_pct, atr, pcr, ce_oi, pe_oi,
+    #       strategies_fired, hour_filter_tier, hour_filter_rolling_wr
     signal_context: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    # True when the hour-filter suppressed the Telegram alert (signal still saved + evaluated)
+    alert_suppressed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     # Lifecycle
     state: Mapped[SignalState] = mapped_column(SAEnum(SignalState), default=SignalState.OPEN)

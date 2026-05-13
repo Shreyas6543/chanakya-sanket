@@ -106,8 +106,15 @@ async def run_signal_engine():
 
                 if signal:
                     await session.commit()
-                    await send_signal_alert(signal)
-                    logger.info("Signal sent", symbol=symbol, confidence=signal.confidence)
+                    if not signal.alert_suppressed:
+                        tier = (signal.signal_context or {}).get("hour_filter_tier", "ALERT")
+                        await send_signal_alert(signal, warn=(tier == "WARN"))
+                    logger.info(
+                        "Signal saved",
+                        symbol=symbol,
+                        confidence=signal.confidence,
+                        alert_suppressed=signal.alert_suppressed,
+                    )
 
             except Exception as e:
                 logger.error("Signal engine error", symbol=symbol, error=str(e))

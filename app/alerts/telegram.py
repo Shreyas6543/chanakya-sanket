@@ -21,7 +21,7 @@ REASON_LABELS = {
 }
 
 
-def format_signal_message(signal: Signal) -> str:
+def format_signal_message(signal: Signal, warn: bool = False) -> str:
     is_call = signal.direction.value == "CALL"
     dir_emoji = "🟢" if is_call else "🔴"
     dir_label = "CALL  (BUY CE)" if is_call else "PUT  (BUY PE)"
@@ -33,8 +33,18 @@ def format_signal_message(signal: Signal) -> str:
         for r, pts in signal.reasons.items()
     )
 
+    ctx          = signal.signal_context or {}
+    rolling_wr   = ctx.get("hour_filter_rolling_wr")
+    warn_header  = (
+        f"⚠️ _Low-confidence hour — rolling WR {rolling_wr}%. Extra caution advised._\n\n"
+        if warn and rolling_wr is not None
+        else "⚠️ _Low-confidence hour — extra caution advised._\n\n"
+        if warn
+        else ""
+    )
+
     return f"""
-{dir_emoji} *{signal.symbol}  —  {dir_label}*
+{warn_header}{dir_emoji} *{signal.symbol}  —  {dir_label}*
 \u2015\u2015\u2015\u2015\u2015\u2015\u2015\u2015\u2015\u2015\u2015\u2015\u2015\u2015\u2015\u2015\u2015\u2015\u2015\u2015
 
 🎯 *Strike:* `{signal.strike:.0f}`   📅 *Expiry:* `{signal.expiry}`
@@ -56,8 +66,8 @@ _⚠️ Paper trade only — do not auto-execute_
 """.strip()
 
 
-async def send_signal_alert(signal: Signal) -> bool:
-    message = format_signal_message(signal)
+async def send_signal_alert(signal: Signal, warn: bool = False) -> bool:
+    message = format_signal_message(signal, warn=warn)
     url = TELEGRAM_API.format(token=settings.telegram_bot_token)
 
     async with httpx.AsyncClient() as client:

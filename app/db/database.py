@@ -47,6 +47,12 @@ async def create_tables():
                 "ALTER TABLE signals ADD COLUMN IF NOT EXISTS signal_context JSONB"
             )
         )
+        # alert_suppressed — hour-filter flag (True = Telegram skipped, outcome still tracked)
+        await conn.execute(
+            __import__("sqlalchemy").text(
+                "ALTER TABLE signals ADD COLUMN IF NOT EXISTS alert_suppressed BOOLEAN NOT NULL DEFAULT FALSE"
+            )
+        )
         # Unique constraint on candles to prevent duplicate live candle saves on restart
         await conn.execute(
             __import__("sqlalchemy").text(

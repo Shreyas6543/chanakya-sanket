@@ -221,6 +221,27 @@ async def generate_signal(
         source=source,
         signal_context=signal_context,
     )
+
+    # ── Hour filter ───────────────────────────────────────────────────────────
+    # Only applied to live signals.  Mock/historical signals always get alerts.
+    # The signal is ALWAYS saved to DB and evaluated — suppression only affects
+    # whether a Telegram alert is dispatched.  This keeps the rolling WR updated
+    # even for "bad" hours so the filter self-corrects as the market changes.
+    if source == "live" and not force and _hour is not None:
+        from app.utils.hour_filter import get_hour_tier
+        _tier, _rolling_wr = await get_hour_tier(_hour, session)
+        signal_context["hour_filter_tier"]       = _tier
+        if _rolling_wr is not None:
+            signal_context["hour_filter_rolling_wr"] = _rolling_wr
+        signal.signal_context  = signal_context   # update with tier info
+        signal.alert_suppressed = (_tier == "SUPPRESS")
+        if signal.alert_suppressed:
+            logger.info(
+                "Signal Telegram suppressed by hour filter",
+                symbol=symbol, hour=_hour,
+                tier=_tier, rolling_wr=_rolling_wr,
+            )
+
     session.add(signal)
     await session.flush()
 
