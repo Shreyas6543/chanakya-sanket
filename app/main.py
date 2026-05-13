@@ -575,31 +575,46 @@ async def api_dashboard(
 # ── Candles API ────────────────────────────────────────────────────────────────
 
 @app.get("/api/candles")
-async def api_candles(symbol: str = "NIFTY", date: str | None = None):
-    """5-min OHLCV candles for a symbol on a given date. Reads local parquet first."""
+async def api_candles(
+    symbol: str = "NIFTY",
+    date: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+):
+    """5-min OHLCV candles for a symbol across a date range. Reads local parquet first."""
     from datetime import date as date_type, timezone, timedelta
     from app.market_data.historical import fetch_historical_candles
 
     IST = timezone(timedelta(hours=5, minutes=30))
-    d = date_type.fromisoformat(date) if date else date_type.today()
-    df = await fetch_historical_candles(symbol.upper(), d)
-    if df.empty:
-        return []
+
+    if start_date or end_date:
+        d_start = date_type.fromisoformat(start_date) if start_date else date_type.today()
+        d_end   = date_type.fromisoformat(end_date)   if end_date   else date_type.today()
+    else:
+        d_single = date_type.fromisoformat(date) if date else date_type.today()
+        d_start = d_end = d_single
 
     result = []
-    for _, row in df.iterrows():
-        ts = row["timestamp"]
-        if hasattr(ts, "tzinfo") and ts.tzinfo is not None:
-            ts = ts.astimezone(IST)
-        result.append({
-            "t":  ts.strftime("%H:%M") if hasattr(ts, "strftime") else str(ts),
-            "ts": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
-            "o":  round(float(row["open"]),   2),
-            "h":  round(float(row["high"]),   2),
-            "l":  round(float(row["low"]),    2),
-            "c":  round(float(row["close"]),  2),
-            "v":  int(float(row["volume"])),
-        })
+    current = d_start
+    while current <= d_end:
+        if current.weekday() < 5:  # Mon–Fri only
+            df = await fetch_historical_candles(symbol.upper(), current)
+            for _, row in df.iterrows():
+                ts = row["timestamp"]
+                if hasattr(ts, "tzinfo") and ts.tzinfo is not None:
+                    ts = ts.astimezone(IST)
+                result.append({
+                    "date": current.isoformat(),
+                    "t":   ts.strftime("%H:%M") if hasattr(ts, "strftime") else str(ts),
+                    "ts":  ts.isoformat()       if hasattr(ts, "isoformat") else str(ts),
+                    "o":   round(float(row["open"]),  2),
+                    "h":   round(float(row["high"]),  2),
+                    "l":   round(float(row["low"]),   2),
+                    "c":   round(float(row["close"]), 2),
+                    "v":   int(float(row["volume"])),
+                })
+        current += timedelta(days=1)
+
     return result
 
 

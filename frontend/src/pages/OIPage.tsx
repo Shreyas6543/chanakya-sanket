@@ -58,7 +58,6 @@ export default function OIPage() {
   const maxPcr  = pcrs.length ? Math.max(...pcrs) : null
   const minPcr  = pcrs.length ? Math.min(...pcrs) : null
 
-  const latestSpot = n > 0 ? data[n - 1].spot : null
   const latestPcr  = n > 0 ? data[n - 1].pcr : null
   const pcrSentiment = latestPcr == null ? '—'
     : latestPcr > 1.2 ? 'Bearish (Puts dominate)'
@@ -151,8 +150,8 @@ export default function OIPage() {
                 />
                 <Tooltip
                   {...tooltipStyle}
-                  labelFormatter={fmtDate}
-                  formatter={(v: unknown, name: string) => [fmtOI(v as number), name]}
+                  labelFormatter={(d: unknown) => fmtDate(String(d))}
+                  formatter={(v: unknown, name: unknown) => [fmtOI(v as number), String(name)]}
                 />
                 <Legend wrapperStyle={{ fontSize: 11, color: '#9ca3af' }} />
                 <Area type="monotone" dataKey="call_oi" name="Call OI" stroke="#22c55e"
@@ -192,9 +191,9 @@ export default function OIPage() {
                 />
                 <Tooltip
                   {...tooltipStyle}
-                  labelFormatter={fmtDate}
-                  formatter={(v: unknown, name: string) =>
-                    name === 'PCR' ? [(v as number).toFixed(3), name] : [fmtOI(v as number), name]
+                  labelFormatter={(d: unknown) => fmtDate(String(d))}
+                  formatter={(v: unknown, name: unknown) =>
+                    name === 'PCR' ? [(v as number).toFixed(3), String(name)] : [fmtOI(v as number), String(name)]
                   }
                 />
                 <Legend wrapperStyle={{ fontSize: 11, color: '#9ca3af' }} />
@@ -242,9 +241,9 @@ export default function OIPage() {
                 />
                 <Tooltip
                   {...tooltipStyle}
-                  labelFormatter={fmtDate}
-                  formatter={(v: unknown, name: string) =>
-                    name === 'Spot' ? [(v as number).toFixed(2), name] : [fmtOI(v as number), name]
+                  labelFormatter={(d: unknown) => fmtDate(String(d))}
+                  formatter={(v: unknown, name: unknown) =>
+                    name === 'Spot' ? [(v as number).toFixed(2), String(name)] : [fmtOI(v as number), String(name)]
                   }
                 />
                 <Legend wrapperStyle={{ fontSize: 11, color: '#9ca3af' }} />
