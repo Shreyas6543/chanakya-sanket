@@ -67,6 +67,8 @@ class Settings(BaseSettings):
     points_rsi_momentum: int = 15
     points_bullish_engulfing: int = 15
     points_opening_range: int = 15
+    points_supertrend: int = 20
+    points_pdh_pdl: int = 15
     points_positive_sentiment: int = 10
 
     # Strategy thresholds

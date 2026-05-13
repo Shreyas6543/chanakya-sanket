@@ -8,6 +8,8 @@ from app.strategies.vwap_breakout import VWAPBreakoutStrategy
 from app.strategies.rsi_momentum import RSIMomentumStrategy
 from app.strategies.opening_range import OpeningRangeBreakoutStrategy
 from app.strategies.oi_buildup import OIBuildupStrategy
+from app.strategies.supertrend import SupertrendStrategy
+from app.strategies.pdh_pdl import PDHPDLStrategy
 from app.signals.confidence import calculate_confidence
 from app.signals.strike_selector import select_strike, select_expiry
 from app.signals.lifecycle import get_open_signal_count
@@ -25,10 +27,12 @@ STRATEGIES = [
     RSIMomentumStrategy(),
     OpeningRangeBreakoutStrategy(),
     OIBuildupStrategy(),
+    SupertrendStrategy(),
+    PDHPDLStrategy(),
 ]
 
 # Breakout strategies suppressed in sideways markets
-BREAKOUT_STRATEGIES = {"vwap_breakout", "opening_range_breakout"}
+BREAKOUT_STRATEGIES = {"vwap_breakout", "opening_range_breakout", "pdh_pdl"}
 
 
 async def generate_signal(

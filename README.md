@@ -77,6 +77,9 @@ Ctrl+C                            # Stop the server
 | `make simulate DATE=2026-05-11 COUNT=5` | Same, limit to 5 signals |
 | `make backfill` | Replay last 6 weeks of trading days |
 | `make backfill WEEKS=4` | Replay last 4 weeks |
+| `make backfill-full` | 2-year walk-forward backfill (clears historical signals, replays from 2024-05-13) |
+| `make backfill-progress` | Check backfill signal counts + WR while backfill-full is running |
+| `make ui` | Start analytics dashboard on http://localhost:5173 |
 
 ---
 
@@ -135,17 +138,25 @@ Upstox WebSocket → 5-min candle → Strategies → Confidence Score → Signal
 **Strategies (and points):**
 | Strategy | Points | What it checks |
 |---|---|---|
-| OI Buildup | 25 | Call/put OI change >1% with price confirmation |
+| OI Buildup | 25 | Call/put OI change >1% with price confirmation (live only — skipped in backfill) |
 | VWAP Breakout | 20 | Price crosses VWAP + volume spike |
+| Supertrend | 20 | ATR-based trailing stop flips direction (bearish→bullish=CALL, bullish→bearish=PUT) |
 | RSI Momentum | 15 | RSI crosses 55 (lookback 5 candles) + EMA alignment |
 | Opening Range Breakout | 15 | Price breaks first-15min high/low |
+| PDH/PDL Breakout | 15 | Close breaks above previous day's high (CALL) or below previous day's low (PUT) |
 | Positive Sentiment | 10 | VADER news sentiment > 0.05 |
 
-**Confidence threshold:** 60 (normalized 0–100). Without OI (max 50pts): all 3 price strategies must fire → score = 83. With OI (max 75pts): 3 strategies needed → score = 67.
+**Confidence threshold:** 60 (normalized 0–100). Score = `raw_pts / max_possible × 100`. Max is computed only from strategies actually evaluated + sentiment if available. At least 2 strategies must agree.
 
 **Market regime:**
-- CPR width < 0.15% of pivot → SIDEWAYS → VWAP + ORB strategies suppressed
-- Falls back to ATR check: ATR < 70% of 20-period average → SIDEWAYS
+- ATR >= 70% of 20-period average → TRENDING → all strategies active
+- ATR < 70% → SIDEWAYS → VWAP, ORB, PDH/PDL strategies suppressed
+
+**Hour filter (adaptive shadow):**
+- Every hour's rolling WR is tracked from DB outcomes
+- If an hour has < 40% WR with ≥ 15 samples, signals are tagged `source=shadow`
+- Shadow signals: saved + evaluated, but Telegram alert skipped
+- No hours are hard-blocked — the filter self-corrects as outcomes accumulate
 
 **Circuit breaker:**
 - 2 consecutive SL hits on same symbol → that symbol paused for the day
@@ -214,14 +225,17 @@ While running in live mode, OI snapshots (call_oi, put_oi) are automatically sav
 
 | Config | Signals | Win Rate | Notes |
 |---|---|---|---|
-| Fake OI | 562 | 44.8% | Inflated — OI circular, always agreed with price |
-| Real NSE EOD OI | 150 | 31.9% | EOD granularity wrong for intraday |
-| Price action only (baseline) | 97 | 36.5% | Honest, above 33.3% break-even |
-| + Zerodha improvements | 564 | **42.6%** | CPR regime + RSI continuation + strike fix |
+| Fake OI (old) | 562 | 44.8% | Inflated — OI circular, always agreed with price |
+| Real NSE EOD OI | 150 | 31.9% | EOD granularity wrong for intraday, adds noise |
+| No OI (old normalization bug) | 97 | 36.5% | sentiment + unevaluated strategies in max_possible |
+| **No OI (honest baseline)** | **364** | **44.8%** | **Corrected normalization, min 2 strategies — Nov 2025–May 2026** |
+| + Adaptive hour shadow filter | — | **51.4%** | Non-shadow signals only, walk-forward 2024–2026 |
 
 > **Note on win rate calculation:** EXPIRED and USER_CLOSED signals count as losses in the denominator (`resolved = wins + losses + expired`). Options held to EOD always incur theta decay — they are not neutral events.
 
 **Monthly pattern:** Dec historically ~20% WR (thin liquidity). Feb–Mar best at 55–60%.
+
+**OI in backfill vs live:** OI strategy is skipped in backfill (EOD data wrong granularity). In live mode Upstox real-time options chain is used. NSE EOD OI is stored in `signal_context.pcr` for post-hoc analysis only.
 
 ---
 
@@ -279,22 +293,27 @@ trading-engine/
 ├── .env.example                # Template
 ├── docker-compose.yml          # PostgreSQL + Redis
 ├── requirements.txt
+├── frontend/                   # React + TypeScript dashboard (Vite, port 5173)
+│   └── src/
+│       ├── pages/DashboardPage.tsx
+│       └── components/         # EquityCurve, MonthlyBreakdown, LivePrices, ClaudePanel
 ├── scripts/
-│   ├── run_backfill.py         # Standalone full backfill (runs directly, no HTTP timeout)
+│   ├── run_backfill.py         # Standalone full backfill (no HTTP timeout)
 │   └── download_nse_oi.py      # Downloads NSE F&O Bhavcopy OI data
 ├── data/nse_oi/                # 253 days of NSE EOD OI (May 2025 – May 2026)
 └── app/
     ├── main.py                 # FastAPI app + all endpoints + _simulate_one_day
     ├── config.py               # All settings via pydantic-settings
     ├── scheduler.py            # APScheduler jobs
-    ├── indicators/             # RSI, VWAP, EMA, ATR, Volume, CPR
-    ├── strategies/             # VWAP breakout, RSI momentum, Opening range, OI buildup
+    ├── indicators/             # RSI, VWAP, EMA, ATR, Volume, Supertrend
+    ├── strategies/             # VWAP breakout, RSI momentum, Opening range, OI buildup,
+    │                           #   Supertrend, PDH/PDL
     ├── signals/                # Generator, confidence scoring, strike selector, lifecycle
     ├── market_data/            # WebSocket client, candle processor, options chain, real OI
     ├── analytics/              # Win rate, P&L, by_hour, by_strategy_combo, by_regime
     ├── ai/                     # Signal filter (claude-agent-sdk, live mode only)
     ├── alerts/                 # Telegram
-    └── utils/                  # Market hours, regime detection, OI toggle
+    └── utils/                  # Market hours, regime detection, OI toggle, hour filter
 ```
 
 ---
@@ -308,7 +327,8 @@ trading-engine/
 | `make dev` fails | Docker Desktop not running — start it first |
 | Backfill script import error | Starlette version mismatch — run `.venv/bin/pip install "starlette==0.37.2"` |
 | Signal only after 1 PM in backfill | Previous-day seed missing — fixed in `_simulate_one_day` (3 prev weekdays seeded) |
-| 15:00–15:30 signals blocked | Intentional — 2.4% WR in backtest, hardcoded block |
+| All signals showing as shadow | Hour filter needs 15+ samples/hour — run full backfill first to bootstrap WR data |
+| Dashboard not loading | Run `make ui` in a separate terminal (requires `make dev` already running) |
 
 ---
 
@@ -327,9 +347,9 @@ Before changing any strategy, indicator, or confidence threshold:
 
 | Phase | Status |
 |---|---|
-| Phase 1 — Core signal engine | ✅ Done |
-| Phase 2 — Paper trading validation | 🔄 In Progress |
-| Phase 3 — Analytics dashboard | Not started |
-| Phase 4 — Strategy optimization | Not started |
-| Phase 5 — ML layer | Not started |
+| Phase 1 — Core signal engine | Done |
+| Phase 2 — Paper trading validation | In Progress (accumulating live signals) |
+| Phase 3 — Analytics dashboard | Done (React dashboard, equity curve, monthly WR, AI analyst) |
+| Phase 4 — Strategy optimization | Skipped (subsumed by Phase 5 ML) |
+| Phase 5 — ML layer | In Progress (pulling forward — building on 2yr historical data) |
 | Phase 6 — SEBI compliance + productization | Not started |

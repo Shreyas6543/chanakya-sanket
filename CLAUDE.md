@@ -37,7 +37,7 @@ An explainable, rule-based intraday options trading intelligence engine for Indi
 - Stores everything in PostgreSQL for analytics
 - Tags every signal as `live` or `mock` for clean data separation
 
-**No auto-trading. No ML. No frontend. Backend only.**
+**No auto-trading. No ML (until Phase 5). Backend + React dashboard.**
 
 ---
 
@@ -143,14 +143,17 @@ trading-engine/
 │   │   ├── vwap.py                  # VWAP + vwap_breakout()
 │   │   ├── ema.py                   # EMA + ema_bullish_alignment()
 │   │   ├── atr.py                   # ATR + current_atr()
-│   │   └── volume.py                # volume_spike()
+│   │   ├── volume.py                # volume_spike()
+│   │   └── supertrend.py            # Supertrend indicator (ATR-based trailing stop)
 │   ├── strategies/
 │   │   ├── base.py                  # BaseStrategy ABC + StrategySignal dataclass
 │   │   ├── vwap_breakout.py         # VWAP cross + volume spike → +20 pts
 │   │   ├── rsi_momentum.py          # RSI cross 55 + EMA alignment → +15 pts
-│   │   ├── bullish_engulfing.py     # Engulfing candle near VWAP → +15 pts
+│   │   ├── bullish_engulfing.py     # REMOVED — 14.3% WR (kept for reference only)
 │   │   ├── opening_range.py         # First 15m breakout + OI → +15 pts
-│   │   └── oi_buildup.py            # Call OI buildup + put unwind → +25 pts
+│   │   ├── oi_buildup.py            # Call OI buildup + put unwind → +25 pts
+│   │   ├── supertrend.py            # Supertrend direction crossover → +20 pts
+│   │   └── pdh_pdl.py               # Previous day high/low breakout → +15 pts
 │   ├── signals/
 │   │   ├── generator.py             # Pipeline: strategies → confidence → Signal DB row
 │   │   ├── confidence.py            # Scoring engine → ConfidenceResult
@@ -165,7 +168,8 @@ trading-engine/
 │   │   └── engine.py                # get_overall_stats, get_reason_accuracy, get_regime_performance
 │   └── utils/
 │       ├── market_hours.py          # is_market_open, can_generate_signals, is_eod, now_ist
-│       └── regime.py                # detect_regime (TRENDING / SIDEWAYS)
+│       ├── regime.py                # detect_regime (TRENDING / SIDEWAYS)
+│       └── hour_filter.py           # should_shadow(hour, session) — adaptive WR-based shadow gate
 └── tools/
     └── backtest.py                  # Standalone backtesting script (not a service)
 ```
@@ -295,8 +299,10 @@ candles
 |---|---|---|
 | OI Buildup | +25 | Call or put OI change >1% with price confirmation (live: intraday Upstox; backfill: skipped) |
 | VWAP Breakout | +20 | Price crosses above VWAP + volume spike >1.5x (volume check skipped for zero-volume indices) |
+| Supertrend | +20 | ATR-based trailing stop flips direction: bearish→bullish=CALL, bullish→bearish=PUT. Requires 20 candles warm-up. |
 | RSI Momentum | +15 | RSI crosses above 55 within last 5 candles (lookback=5) + EMA9 > EMA21 > EMA50 |
 | Opening Range Breakout | +15 | Price breaks first-15m high/low (volume check skipped for zero-volume indices) |
+| PDH/PDL Breakout | +15 | Close breaks above previous day's high (CALL) or below previous day's low (PUT) — crossover only |
 | Positive Sentiment | +10 | VADER compound > 0.05 on relevant news |
 | **Minimum to fire** | **60** | Score is normalized to 0-100 — 60 means same quality bar in all modes |
 
@@ -304,9 +310,11 @@ candles
 
 **Confidence normalization (confidence.py):**
 Score is normalized to 0-100 as `raw_score / max_possible × 100`. Max possible is computed from only the strategies actually evaluated (in `strategy_signals`) and sentiment only when `sentiment_label is not None`. At least 2 strategies must agree or signal is blocked. This keeps the 60-point threshold meaningful regardless of mode:
-- Backfill (VWAP+RSI+ORB evaluated, max=50): RSI+ORB (30pts) = 60% → fires; VWAP+RSI (35pts) = 70% → fires
-- Live (all 4 + possible sentiment, max=75): needs 45pts = 3 price-action strategies
-- SIDEWAYS (only RSI available, no OI): RSI alone = 1 strategy → blocked (min 2 required)
+- Backfill (VWAP+RSI+ORB+Supertrend+PDH/PDL evaluated, no OI): max=85. Most 2-strategy combos fire.
+- Live (all strategies incl. OI + possible sentiment, max=110): higher bar, needs stronger confluence.
+- SIDEWAYS (VWAP/ORB/PDH/PDL suppressed, only RSI+Supertrend): RSI alone = 1 strategy → blocked (min 2 required)
+
+**BREAKOUT_STRATEGIES** (suppressed in SIDEWAYS): `vwap_breakout`, `opening_range_breakout`, `pdh_pdl`
 
 **OI strategy behaviour by mode:**
 - **Backfill/historical**: `oi_data=None` — OI strategy skipped entirely. EOD day-over-day OI has wrong granularity for intraday signals and was found to hurt WR (31.9% vs 36.5% without it).
@@ -494,7 +502,7 @@ if expired. Re-authenticate via http://localhost:8000/auth/login.
 - [ ] Analyse by_hour + by_strategy_combo once 50+ live signals collected
 
 ### Phase 3 — Analytics Dashboard — COMPLETE ✓
-- [x] React + TypeScript frontend (strict mode, `tsc --noEmit` clean)
+- [x] React + TypeScript frontend (strict mode, `tsc --noEmit` clean) — `make ui` → :5173
 - [x] `/api/dashboard` endpoint — filtered overview, by_symbol, by_direction, signal list
 - [x] `/api/ai/analyze` — streaming Claude AI analyst (Chanakya AI panel)
 - [x] EquityCurve component — cumulative P&L area chart, peak + max drawdown
@@ -502,7 +510,7 @@ if expired. Re-authenticate via http://localhost:8000/auth/login.
 - [x] LivePrices widget — polls `/api/debug/live-prices` every 5s, price flash on tick
 - [x] By-hour and by-strategy-combo WR bars (client-side computed from signal data)
 - [x] Signal table with sort + filter (symbol, direction, outcome, source)
-- [x] Source tagging: live / historical / mock badges
+- [x] Source tagging: live / historical / mock / shadow badges
 
 ### Phase 4 — Strategy Optimization — SKIPPED
 Subsumed by Phase 5 ML. ML grid-search over features is strictly more powerful than manual parameter tuning.
@@ -565,6 +573,8 @@ Intraday 5-min OI history doesn't exist cheaply — not a blocker for ML.
 3. **signal_context hour/minute null in backfill** — Historical candles use RangeIndex; timestamp extracted from column. Works correctly for live WebSocket candles (DatetimeIndex).
 4. **`/debug/strategies/{symbol}` overwrites live candle buffer** — This endpoint calls `generate_mock_candles()` which replaces real data. Never call it during market hours. Use `/debug/real-strategies/{symbol}` instead.
 5. **Partial candle lost on restart** — The candle currently being built from live ticks (not yet closed) is lost on server restart. Completed candles are safe in DB. Impact: ≤5 minutes of tick data lost.
+6. **Hour filter needs bootstrap** — On a fresh DB, all hours have 0 samples so nothing is ever shadowed. Run `make backfill-full` once to populate 2yr of signals so the filter has data to work with.
+7. **New strategies (Supertrend, PDH/PDL) not yet backfill-tested** — Added May 2026. Need a fresh `make backfill-full` run to measure WR impact.
 
 ## Phase 5 — Next Immediate Steps
 1. **5a**: Extend `scripts/download_nse_oi.py` to Jan 2020

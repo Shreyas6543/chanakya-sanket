@@ -72,6 +72,8 @@ def calculate_confidence(
         "rsi_momentum":           settings.points_rsi_momentum,
         "opening_range_breakout": settings.points_opening_range,
         "oi_buildup":             settings.points_oi_buildup,
+        "supertrend":             settings.points_supertrend,
+        "pdh_pdl":                settings.points_pdh_pdl,
     }
     max_possible = sum(pts for name, pts in all_strategy_pts.items() if name in strategy_names)
     if sentiment_label is not None:

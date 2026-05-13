@@ -216,3 +216,19 @@
 - **Why**: claude-agent-sdk install silently upgraded Starlette, breaking FastAPI's Router init
 - **Result**: FastAPI works again; backfill script imports correctly
 - **Status**: KEPT
+
+---
+
+### [2026-05-13] Adaptive hour-based shadow filter
+- **What changed**: New `app/utils/hour_filter.py`. `generator.py` — removed 13:30 IST hard cutoff. Added `should_shadow(hour, session)` call for `source IN ('live','historical')`. When rolling WR for the hour < 40% AND ≥ 15 samples, signal.source set to 'shadow'. Shadow signals are saved to DB + evaluated, Telegram skipped. `scheduler.py` — Telegram send conditioned on `signal.source != 'shadow'`. Dashboard aggregation: shadow signals excluded from overview/by_symbol/by_direction stats but included in table. Source badge: purple.
+- **Why**: Hard cutoff at 13:30 was explore-vs-exploit failure: bad hours would never recover because no signals → no data → filter never lifts. Shadow source lets the filter self-correct as outcomes accumulate.
+- **Result**: After walk-forward backfill (May 2024–May 2026), WR improved from 41.7% → 51.4% when filtering to non-shadow signals.
+- **Status**: KEPT — do NOT re-introduce hard time cutoffs
+
+---
+
+### [2026-05-13] Supertrend + PDH/PDL strategies added
+- **What changed**: `app/indicators/supertrend.py` (new) — ATR-based trailing stop, period=10, multiplier=3.0. `app/strategies/supertrend.py` (new) — fires on direction crossover; bearish→bullish=CALL, bullish→bearish=PUT. +20 pts. `app/strategies/pdh_pdl.py` (new) — fires when today's close breaks above previous day's high (CALL) or below previous day's low (PUT) for the first time. +15 pts. PDH/PDL added to BREAKOUT_STRATEGIES (suppressed in SIDEWAYS). Both added to STRATEGIES list in generator.py and all_strategy_pts in confidence.py.
+- **Why**: Price action strategies with strong intraday breakout evidence. Supertrend adds trend-following confirmation. PDH/PDL captures widely-watched breakout levels used by large participants.
+- **Result**: Pending backfill re-run
+- **Status**: KEPT
