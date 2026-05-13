@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 
 interface Candle {
   date: string
@@ -6,6 +6,7 @@ interface Candle {
   o: number; h: number; l: number; c: number; v: number
 }
 interface TooltipData { candle: Candle; x: number; y: number }
+type SortKey = 'date' | 't' | 'o' | 'h' | 'l' | 'c' | 'v' | 'chgPct'
 
 // SVG layout constants (coordinate space)
 const PRICE_H = 300
@@ -127,7 +128,38 @@ export default function CandlesPage() {
 
   const priceTicks = yLabels(minP, maxP, 6)
   // Time tick every N candles (skip if it falls on a day-start — already labelled there)
-  const xStep      = Math.max(1, Math.ceil(n / 16))
+  const xStep = Math.max(1, Math.ceil(n / 16))
+
+  // ── Table sort ──────────────────────────────────────────────────────────────
+  const [sortCol, setSortCol] = useState<SortKey>('date')
+  const [sortAsc, setSortAsc] = useState(true)
+
+  // Pre-compute chgPct per candle (relative to previous candle close; uses original order)
+  const rows = useMemo(() => candles.map((c, i) => {
+    const prevClose = i > 0 ? candles[i - 1].c : c.o
+    return { ...c, chgPct: ((c.c - prevClose) / prevClose) * 100 }
+  }), [candles])
+
+  const sorted = useMemo(() => [...rows].sort((a, b) => {
+    const av = a[sortCol], bv = b[sortCol]
+    if (av < bv) return sortAsc ? -1 : 1
+    if (av > bv) return sortAsc ? 1 : -1
+    return 0
+  }), [rows, sortCol, sortAsc])
+
+  const handleSort = (col: SortKey) => {
+    if (sortCol === col) setSortAsc(a => !a)
+    else { setSortCol(col); setSortAsc(true) }
+  }
+
+  const Th = ({ col, children }: { col: SortKey; children: React.ReactNode }) => (
+    <th
+      className="text-left py-2 pr-4 font-medium cursor-pointer select-none hover:text-white whitespace-nowrap"
+      onClick={() => handleSort(col)}
+    >
+      {children}{sortCol === col ? (sortAsc ? ' ▲' : ' ▼') : ''}
+    </th>
+  )
 
   const change     = n > 0 ? candles[n - 1].c - candles[0].o : 0
   const changePct  = n > 0 ? (change / candles[0].o) * 100 : 0
@@ -342,27 +374,25 @@ export default function CandlesPage() {
               <table className="w-full text-xs">
                 <thead className="sticky top-0 bg-gray-900 z-10">
                   <tr className="text-gray-500 uppercase tracking-wide border-b border-gray-800">
-                    <th className="text-left py-2 pr-4 font-medium">Date</th>
-                    <th className="text-left py-2 pr-4 font-medium">Time</th>
-                    <th className="text-right py-2 pr-4 font-medium">Open</th>
-                    <th className="text-right py-2 pr-4 font-medium">High</th>
-                    <th className="text-right py-2 pr-4 font-medium">Low</th>
-                    <th className="text-right py-2 pr-4 font-medium">Close</th>
-                    <th className="text-right py-2 pr-4 font-medium">Volume</th>
-                    <th className="text-right py-2 font-medium">Chg%</th>
+                    <Th col="date">Date</Th>
+                    <Th col="t">Time</Th>
+                    <Th col="o">Open</Th>
+                    <Th col="h">High</Th>
+                    <Th col="l">Low</Th>
+                    <Th col="c">Close</Th>
+                    <Th col="v">Volume</Th>
+                    <Th col="chgPct">Chg%</Th>
                   </tr>
                 </thead>
                 <tbody>
-                  {candles.map((c, i) => {
-                    const bull     = c.c >= c.o
-                    const prevClose = i > 0 ? candles[i - 1].c : c.o
-                    const chgPct   = ((c.c - prevClose) / prevClose) * 100
-                    const dayStart = isDayStart(i)
+                  {sorted.map((c, i) => {
+                    const bull      = c.c >= c.o
+                    const showDate  = i === 0 || sorted[i].date !== sorted[i - 1].date
                     return (
-                      <tr key={i}
-                        className={`border-b border-gray-800/50 hover:bg-gray-800/30 ${dayStart && i > 0 ? 'border-t border-t-gray-700' : ''}`}>
+                      <tr key={`${c.date}-${c.t}`}
+                        className={`border-b border-gray-800/50 hover:bg-gray-800/30 ${showDate && i > 0 ? 'border-t border-t-gray-700' : ''}`}>
                         <td className="py-1.5 pr-4 text-gray-500 whitespace-nowrap">
-                          {dayStart ? fmtDate(c.date) : ''}
+                          {showDate ? fmtDate(c.date) : ''}
                         </td>
                         <td className="py-1.5 pr-4 text-gray-300 font-mono">{c.t}</td>
                         <td className="py-1.5 pr-4 text-right text-gray-300 font-mono">{c.o.toFixed(2)}</td>
@@ -374,8 +404,8 @@ export default function CandlesPage() {
                         <td className="py-1.5 pr-4 text-right text-gray-400 font-mono">
                           {c.v > 0 ? c.v.toLocaleString('en-IN') : '—'}
                         </td>
-                        <td className={`py-1.5 text-right font-mono font-medium ${chgPct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                          {chgPct >= 0 ? '+' : ''}{chgPct.toFixed(2)}%
+                        <td className={`py-1.5 text-right font-mono font-medium ${c.chgPct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                          {c.chgPct >= 0 ? '+' : ''}{c.chgPct.toFixed(2)}%
                         </td>
                       </tr>
                     )
