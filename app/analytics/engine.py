@@ -1,4 +1,5 @@
 import structlog
+from datetime import date
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, case
 from app.db.models import Signal, SignalOutcome, StrategyResult, SignalState
@@ -6,9 +7,9 @@ from app.db.models import Signal, SignalOutcome, StrategyResult, SignalState
 logger = structlog.get_logger()
 
 
-async def get_overall_stats(session: AsyncSession) -> dict:
-    """Overall win rate and P&L summary."""
-    result = await session.execute(
+async def get_overall_stats(session: AsyncSession, for_date: date | None = None) -> dict:
+    """Overall win rate and P&L summary. Pass for_date to scope to a single day."""
+    q = (
         select(
             func.count(SignalOutcome.id).label("total"),
             func.sum(
@@ -16,7 +17,11 @@ async def get_overall_stats(session: AsyncSession) -> dict:
             ).label("wins"),
             func.sum(SignalOutcome.pnl).label("total_pnl"),
         )
+        .join(Signal, SignalOutcome.signal_id == Signal.id)
     )
+    if for_date is not None:
+        q = q.where(func.date(Signal.created_at) == for_date)
+    result = await session.execute(q)
     row = result.first()
     total = row.total or 0
     wins = row.wins or 0
