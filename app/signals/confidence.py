@@ -60,25 +60,22 @@ def calculate_confidence(
         reasons["negative_sentiment"] = settings.points_positive_sentiment
         raw_score += settings.points_positive_sentiment
 
-    # Normalize score to 0-100 based on max possible from strategies actually evaluated.
-    # Only strategies present in strategy_signals count toward the denominator.
-    # Sentiment only counts when sentiment_label is not None (otherwise it can never contribute).
-    # This keeps the 60-point threshold meaningful in all modes:
-    #   - Backfill (VWAP+RSI+ORB, no OI, no sentiment): max=50 → RSI+ORB (30pts) = 60% → fires
-    #   - Live (all 4 strategies + possible sentiment): max=75 → 3 strategies needed for 60%
-    strategy_names = {s.reason for s in strategy_signals}
-    all_strategy_pts = {
-        "vwap_breakout":          settings.points_vwap_breakout,
-        "rsi_momentum":           settings.points_rsi_momentum,
-        "opening_range_breakout": settings.points_opening_range,
-        "oi_buildup":             settings.points_oi_buildup,
-        "supertrend":             settings.points_supertrend,
-        "pdh_pdl":                settings.points_pdh_pdl,
-    }
-    max_possible = sum(pts for name, pts in all_strategy_pts.items() if name in strategy_names)
-    if sentiment_label is not None:
-        max_possible += settings.points_positive_sentiment
-
-    score = round(raw_score / max_possible * 100) if max_possible > 0 else 0
+    # Score formula: (fired_pts - unfired_penalty) / 60 * 100, capped at 100.
+    #
+    # unfired_penalty = sum(pts/10) for each evaluated strategy that did NOT fire.
+    # The /10 factor is a small disagreement discount — unfired strategies slightly
+    # reduce confidence but don't dominate the score.
+    #
+    # Denominator 60 is a fixed calibration constant (the old raw threshold):
+    #   - VWAP+RSI+ORB fire, ST+PDH don't: (50 - 3.5) / 60×100 = 77%  → fires ✓
+    #   - RSI+ORB only:                     (30 - 5.5) / 60×100 = 41%  → no fire ✓
+    #   - VWAP+RSI+ORB+ST all fire:         (70 - 1.5) / 60×100 = 114% → capped 100% ✓
+    #   - SIDEWAYS (RSI+ST max):            35 / 60×100 = 58%           → no fire ✓
+    unfired_pts = sum(
+        s.points for s in strategy_signals if not s.fired
+    )
+    unfired_penalty = unfired_pts / 10
+    raw_with_penalty = raw_score - unfired_penalty
+    score = max(0, min(100, round(raw_with_penalty / 60 * 100)))
 
     return ConfidenceResult(score=score, reasons=reasons, direction=direction)

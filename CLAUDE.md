@@ -308,11 +308,25 @@ candles
 
 **Note:** BullishEngulfing strategy removed — backtested at 14.3% WR vs 33.3% break-even.
 
-**Confidence normalization (confidence.py):**
-Score is normalized to 0-100 as `raw_score / max_possible × 100`. Max possible is computed from only the strategies actually evaluated (in `strategy_signals`) and sentiment only when `sentiment_label is not None`. At least 2 strategies must agree or signal is blocked. This keeps the 60-point threshold meaningful regardless of mode:
-- Backfill (VWAP+RSI+ORB+Supertrend+PDH/PDL evaluated, no OI): max=85. Most 2-strategy combos fire.
-- Live (all strategies incl. OI + possible sentiment, max=110): higher bar, needs stronger confluence.
-- SIDEWAYS (VWAP/ORB/PDH/PDL suppressed, only RSI+Supertrend): RSI alone = 1 strategy → blocked (min 2 required)
+**Confidence formula (confidence.py):**
+```
+score = max(0, min(100, round((fired_pts - unfired_pts/10) / 60 * 100)))
+```
+- `fired_pts`: sum of points from all strategies that fired
+- `unfired_pts/10`: small penalty per evaluated-but-not-fired strategy (disagreement discount)
+- `60`: fixed calibration constant — NOT dynamic max_possible
+- Score floored at 0, capped at 100. Min 2 strategies must agree.
+
+Key scores:
+| Combo | Score | Fires? |
+|---|---|---|
+| VWAP+RSI+ORB (ST+PDH don't fire) | 78% | Yes |
+| VWAP+RSI+ORB+Supertrend | 100% | Yes |
+| RSI+ORB only | 41% | No |
+| SIDEWAYS max (RSI+Supertrend) | 58% | No |
+| Single strategy | 0% | No |
+
+**Why not max_possible normalization:** Adding Supertrend+PDH/PDL inflated max_possible 50→85, causing VWAP+RSI+ORB to score 59% (under 60% threshold) — zero signals. Fixed denominator prevents new strategies from breaking existing combos.
 
 **BREAKOUT_STRATEGIES** (suppressed in SIDEWAYS): `vwap_breakout`, `opening_range_breakout`, `pdh_pdl`
 

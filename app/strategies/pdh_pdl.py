@@ -23,7 +23,7 @@ settings = get_settings()
 def _get_timestamps(candles: pd.DataFrame) -> pd.Series:
     """Return a Series of timestamps, regardless of whether stored in index or column."""
     if "timestamp" in candles.columns:
-        return pd.to_datetime(candles["timestamp"])
+        return pd.to_datetime(candles["timestamp"], utc=True)
     if isinstance(candles.index, pd.DatetimeIndex):
         return candles.index.to_series().reset_index(drop=True)
     return None

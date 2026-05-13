@@ -227,6 +227,26 @@
 
 ---
 
+### [2026-05-13] Confidence scoring formula replaced — penalty-based fixed denominator
+
+- **What changed**: `app/signals/confidence.py` — replaced dynamic `max_possible` normalization with:
+  `score = max(0, min(100, round((fired_pts - unfired_pts/10) / 60 * 100)))`
+  - `fired_pts`: sum of points from all strategies that fired
+  - `unfired_pts/10`: small penalty for each evaluated-but-not-fired strategy
+  - `60`: fixed calibration constant (old raw threshold)
+  - Score floored at 0, capped at 100
+- **Why**: Adding Supertrend+PDH/PDL inflated `max_possible` from 50→85, causing the old reliable VWAP+RSI+ORB combo to score 59% (just under the 60% threshold) — producing zero signals. The old dynamic normalization was fragile: adding any new strategy changed the scoring of all existing combos.
+- **Key scores with new formula**:
+  - VWAP+RSI+ORB (2 unfired): 77% → fires ✓
+  - RSI+ORB only (3 unfired): 41% → no fire ✓
+  - VWAP+RSI+ORB+ST: 100% → fires ✓
+  - SIDEWAYS (RSI+ST max=35): 58% → no fire ✓ (sideways still silent)
+  - Single strategy: 0% → no fire ✓ (min-2 rule + low score)
+- **Result**: Pending backfill re-run
+- **Status**: KEPT — do NOT revert to max_possible normalization
+
+---
+
 ### [2026-05-13] Supertrend + PDH/PDL strategies added
 - **What changed**: `app/indicators/supertrend.py` (new) — ATR-based trailing stop, period=10, multiplier=3.0. `app/strategies/supertrend.py` (new) — fires on direction crossover; bearish→bullish=CALL, bullish→bearish=PUT. +20 pts. `app/strategies/pdh_pdl.py` (new) — fires when today's close breaks above previous day's high (CALL) or below previous day's low (PUT) for the first time. +15 pts. PDH/PDL added to BREAKOUT_STRATEGIES (suppressed in SIDEWAYS). Both added to STRATEGIES list in generator.py and all_strategy_pts in confidence.py.
 - **Why**: Price action strategies with strong intraday breakout evidence. Supertrend adds trend-following confirmation. PDH/PDL captures widely-watched breakout levels used by large participants.
