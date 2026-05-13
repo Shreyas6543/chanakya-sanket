@@ -45,13 +45,15 @@ async def should_shadow(hour: int, session: AsyncSession) -> tuple[bool, float |
         SignalState.USER_CLOSED,
     ]
 
-    # Include both live and historical — excludes mock/test so they never skew the filter.
-    # Walk-forward backfill naturally bootstraps: empty DB → ALERT for first months,
-    # then rolling window fills and bad hours start being shadowed automatically.
+    # Include live, historical, AND shadow — all three have real market outcomes
+    # (the lifecycle evaluator runs on every signal regardless of source).
+    # Shadow signals represent what would have happened if we had traded that hour,
+    # so they carry genuine WR information and should influence the filter.
+    # Only mock/test signals are excluded — they use artificial price data.
     result = await session.execute(
         select(Signal)
         .where(Signal.state.in_(closed_states))
-        .where(Signal.source.in_(["live", "historical"]))
+        .where(Signal.source.in_(["live", "historical", "shadow"]))
         .order_by(Signal.created_at.desc())
         .limit(300)
     )
