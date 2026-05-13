@@ -8,10 +8,27 @@
 5. **Never add auto-trading logic.** The system only generates signals. Humans execute.
 6. **Never add ML** until Phase 5 is explicitly started.
 7. **Always run in the project venv**: `.venv/bin/python3` and `.venv/bin/uvicorn`. Never use system Python.
-8. **Always use `make` commands** for dev workflow. See the Makefile section below.
+8. **Always use `make` commands` for dev workflow. See the Makefile section below.
 9. **After every code change**, commit and push to GitHub using conventional commit messages.
 10. **Before suggesting architecture changes**, check if a simpler fix exists first.
 11. **The DB already has real data**. Never drop tables or run destructive migrations without explicit user approval.
+12. **Branch discipline (CRITICAL)**: `main` = live production (v1, stable). `develop` = experimental (v2, under test). NEVER merge develop → main without explicit user approval and passing backtest. New strategies, formula changes, and ML work go on `develop` only.
+
+---
+
+## Branching & Versioning Strategy
+
+| Branch | Purpose | Status |
+|---|---|---|
+| `main` | **v1 — Production** | Live trading. 4 strategies (VWAP, RSI, ORB, OI). Stable. Never break this. |
+| `develop` | **v2 — Experimental** | Supertrend + PDH/PDL + new confidence formula + ML (Phase 5). Under test. |
+
+### Rules
+- All new strategy experiments, formula changes, and ML work happen on `develop`.
+- `develop` → `main` merge only when: (a) backtest WR ≥ v1 baseline (44.8%), (b) explicit user sign-off, (c) LOGIC_CHANGELOG.md updated.
+- Bug fixes that apply to both (e.g. timestamp bugs, Telegram fixes) are committed to `main` first, then cherry-picked to `develop`.
+- Each merge to `main` bumps the version: v1.x (patches), v2.0 (new engine with new strategies/ML).
+- Tag releases: `git tag v1.0.0` on main at stable milestones.
 
 ---
 

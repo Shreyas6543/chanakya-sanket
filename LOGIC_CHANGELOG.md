@@ -8,6 +8,16 @@
 
 ---
 
+### [2026-05-13] Branching strategy introduced — main=v1, develop=v2
+
+- **What changed**: Created `develop` branch from `main` at commit `07af1eb` (post Supertrend+PDH/PDL+new formula). Reverted `main` to 4-strategy stable engine (pre `0e2e9d9`).
+- **v1 (main)**: VWAP+RSI+ORB+OI, max_possible normalization, min_confidence=60. Honest baseline: 364 signals, 44.8% WR.
+- **v2 (develop)**: Supertrend+PDH/PDL added, penalty-based fixed-denominator formula, ML Phase 5 in progress.
+- **Merge rule**: develop → main only when v2 backtest WR ≥ 44.8% AND explicit user approval.
+- **Status**: ACTIVE — respect branch discipline at all times.
+
+---
+
 ## Format
 ```
 ### [YYYY-MM-DD] Short title
