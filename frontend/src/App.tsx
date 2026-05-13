@@ -3,10 +3,14 @@ import ClaudePanel from './components/ClaudePanel'
 import EquityCurve from './components/EquityCurve'
 import MonthlyBreakdown from './components/MonthlyBreakdown'
 import LivePrices from './components/LivePrices'
+import CandlesPage from './pages/CandlesPage'
+import OIPage from './pages/OIPage'
 import type {
   DashboardData, Signal, SignalState, Source,
   SymbolFilter, DirFilter, OutcomeFilter, SourceFilter, ByHour, ByCombo,
 } from './types'
+
+type Page = 'dashboard' | 'candles' | 'oi'
 
 const STRATEGIES = [
   { id: 'vwap_breakout',          label: 'VWAP Breakout', pts: 20 },
@@ -94,11 +98,43 @@ function WRBar({ label, winRate, wins, total, labelWidth = 'w-28' }: WRBarProps)
   )
 }
 
+// ── Navigation ────────────────────────────────────────────────────────────────
+
+function Nav({ page, setPage }: { page: Page; setPage: (p: Page) => void }) {
+  const tabs: { id: Page; label: string }[] = [
+    { id: 'dashboard', label: 'Dashboard' },
+    { id: 'candles',   label: 'Candles' },
+    { id: 'oi',        label: 'OI & PCR' },
+  ]
+  return (
+    <div className="bg-gray-900 border-b border-gray-800 px-6 py-0 flex gap-1 sticky top-0 z-10">
+      {tabs.map(t => (
+        <button
+          key={t.id}
+          onClick={() => setPage(t.id)}
+          className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+            page === t.id
+              ? 'border-purple-500 text-white'
+              : 'border-transparent text-gray-400 hover:text-gray-200'
+          }`}
+        >
+          {t.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 // ── Main app ──────────────────────────────────────────────────────────────────
 
 type SortKey = keyof Signal
 
 export default function App() {
+  const [page, setPage] = useState<Page>('dashboard')
+
+  if (page === 'candles') return <><Nav page={page} setPage={setPage} /><CandlesPage /></>
+  if (page === 'oi')      return <><Nav page={page} setPage={setPage} /><OIPage /></>
+
   const [startDate, setStartDate]       = useState('2024-05-13')
   const [endDate, setEndDate]           = useState(todayStr)
   const [selected, setSelected]         = useState<Set<string>>(new Set())
@@ -218,6 +254,8 @@ export default function App() {
     wr >= 40 ? 'text-green-400' : wr >= 33 ? 'text-yellow-400' : 'text-red-400'
 
   return (
+    <>
+    <Nav page={page} setPage={setPage} />
     <div className="min-h-screen bg-gray-950 text-gray-100 p-6 max-w-screen-2xl mx-auto">
 
       {/* Header */}
@@ -523,5 +561,6 @@ export default function App() {
         </div>
       )}
     </div>
+    </>
   )
 }
