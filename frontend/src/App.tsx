@@ -99,7 +99,7 @@ function WRBar({ label, winRate, wins, total, labelWidth = 'w-28' }: WRBarProps)
 type SortKey = keyof Signal
 
 export default function App() {
-  const [startDate, setStartDate]       = useState('2025-01-01')
+  const [startDate, setStartDate]       = useState('2024-05-13')
   const [endDate, setEndDate]           = useState(todayStr)
   const [selected, setSelected]         = useState<Set<string>>(new Set())
   const [data, setData]                 = useState<DashboardData | null>(null)
