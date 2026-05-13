@@ -4,7 +4,7 @@ import ssl
 import certifi
 import structlog
 import websockets
-from datetime import datetime
+from datetime import datetime, timezone
 from google.protobuf import json_format
 
 from app.config import get_settings
@@ -107,7 +107,7 @@ class UpstoxWebSocketClient:
             feed_response = MarketDataFeedV3_pb2.FeedResponse.FromString(raw)
             data_dict = json_format.MessageToDict(feed_response)
 
-            ts = datetime.utcnow()
+            ts = datetime.now(timezone.utc)
             for instrument_key, feed_data in data_dict.get("feeds", {}).items():
                 symbol = _INSTRUMENT_MAP.get(instrument_key)
                 if not symbol:
