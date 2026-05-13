@@ -195,6 +195,22 @@
 
 ---
 
+### [2026-05-13] signal_time always stored as IST with +05:30 offset
+- **What changed**: `generator.py` — `_sig_ts` converted to IST via `.astimezone(IST)` before extracting hour/minute and before storing `signal_time` in signal_context. Existing 948 naive-UTC timestamps in DB backfilled with correct IST hour/minute and `+05:30` suffix.
+- **Why**: Parquet/historical candle timestamps are UTC. `_sig_ts.hour` was reading UTC hour (e.g. 3am) instead of IST hour (e.g. 9am). Dashboard by_hour chart showed phantom hours 3–8 (UTC) alongside correct hours 9–15 (IST) for newer signals.
+- **Result**: All signal_times consistently stored as IST `+05:30`. By-hour chart now correctly shows only 9–15 IST.
+- **Status**: KEPT — always use IST for all signal_context timestamps
+
+---
+
+### [2026-05-13] Full 2-year backfill completed (May 2024 – May 2026)
+- **What changed**: Ran `POST /trigger/backfill?start_date=2024-05-13&end_date=2025-11-02` to fill gap before Nov 2025. Total historical signals: 1,629 spanning May 2024 – May 2026.
+- **Why**: Oldest signal was Nov 2025. OHLCV parquet data goes back to May 2024. Needed full 2-year dataset for ML training.
+- **Result**: 1,629 historical signals, 41.7% WR (680W/821L/128E). 2-year ML training dataset ready.
+- **Status**: KEPT — do NOT delete historical signals; they are the ML training set
+
+---
+
 ### [2026-05-12] Starlette downgrade to 0.37.2 (infra fix)
 - **What changed**: `starlette` downgraded from 1.0.0 (claude-agent-sdk bumped it) back to 0.37.2 (FastAPI 0.111 requires ~0.37)
 - **Why**: claude-agent-sdk install silently upgraded Starlette, breaking FastAPI's Router init

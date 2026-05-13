@@ -123,11 +123,16 @@ async def generate_signal(
     elif hasattr(candles.index[-1], "hour"):
         _sig_ts = candles.index[-1]
 
-    _sig_time = str(_sig_ts) if _sig_ts is not None else None
     try:
-        _hour = int(_sig_ts.hour)
-        _minute = int(_sig_ts.minute)
+        from datetime import timezone as _tz, timedelta as _td
+        _IST = _tz(_td(hours=5, minutes=30))
+        # Always store signal_time in IST — parquet/historical timestamps come in as UTC
+        _sig_ts_ist = _sig_ts.astimezone(_IST) if hasattr(_sig_ts, "tzinfo") and _sig_ts.tzinfo is not None else _sig_ts
+        _sig_time = str(_sig_ts_ist) if _sig_ts_ist is not None else None
+        _hour = int(_sig_ts_ist.hour)
+        _minute = int(_sig_ts_ist.minute)
     except (AttributeError, TypeError):
+        _sig_time = str(_sig_ts) if _sig_ts is not None else None
         _hour = _minute = None
 
     # Real EOD PCR from NSE data (for analysis) — separate from mock OI used in strategy
