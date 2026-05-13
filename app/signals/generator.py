@@ -56,10 +56,11 @@ async def generate_signal(
     if not force and not can_generate_signals():
         return None
 
-    # Block 15:00–15:30 signals — 2.4% WR in backtest (41 signals), near-guaranteed loss
+    # Block signals after 13:30 IST — WR drops sharply (14:xx=25.7%, 15:xx=11.8%)
+    # Break-even for 2:1 R:R is 33.3%. Only 10–13:xx is consistently above break-even.
     from app.utils.market_hours import now_ist
     _now = now_ist()
-    if not force and _now.hour == 15:
+    if not force and (_now.hour >= 14 or (_now.hour == 13 and _now.minute >= 30)):
         return None
 
     regime = detect_regime(candles)

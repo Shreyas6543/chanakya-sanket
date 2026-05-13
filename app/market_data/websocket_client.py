@@ -76,7 +76,7 @@ class UpstoxWebSocketClient:
         while self._running:
             try:
                 logger.info("Connecting to Upstox WebSocket...")
-                async with websockets.connect(UPSTOX_WS_URL, extra_headers=headers, ssl=ssl_ctx) as ws:
+                async with websockets.connect(UPSTOX_WS_URL, additional_headers=headers, ssl=ssl_ctx) as ws:
                     self._ws = ws
                     await self._subscribe(ws)
                     logger.info("Upstox WebSocket connected", instruments=settings.instrument_list)

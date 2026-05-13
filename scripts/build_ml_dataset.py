@@ -229,6 +229,11 @@ def _process_day(symbol: str, day_str: str, day_df: pd.DataFrame,
     or_high = float(or_df["high"].max()) if not or_df.empty else 0.0
     or_low  = float(or_df["low"].min())  if not or_df.empty else 0.0
 
+    # Track last-fired bar per direction+strategy to avoid duplicate crossover rows.
+    # RSI lookback=5 means ONE crossover can appear in 5 consecutive bars — we only
+    # want the FIRST bar (the actual crossover), not the 4 downstream duplicates.
+    last_fired: dict[str, dict[str, int]] = {"CALL": {}, "PUT": {}}
+
     for i in range(3, n):   # skip first 3 candles — OR not established yet
         row_time = day_df["time_ist"].iloc[i]
 
@@ -244,7 +249,16 @@ def _process_day(symbol: str, day_str: str, day_df: pd.DataFrame,
             day_df, i, rsi, vwap, ema9, ema21, ema50, or_high, or_low
         )
 
-        for direction, strategies in [("CALL", calls), ("PUT", puts)]:
+        for direction, all_strategies in [("CALL", calls), ("PUT", puts)]:
+            # Deduplicate: only keep strategies that weren't fired in the last 5 bars
+            strategies = [
+                s for s in all_strategies
+                if i - last_fired[direction].get(s, -99) > 5
+            ]
+            # Update fired tracking for ALL strategies (even duplicates)
+            for s in all_strategies:
+                last_fired[direction][s] = i
+
             if len(strategies) < min_strategies:
                 continue
 
@@ -254,6 +268,18 @@ def _process_day(symbol: str, day_str: str, day_df: pd.DataFrame,
             atr20_val  = float(atr20.iloc[i]) if not pd.isna(atr20.iloc[i]) else atr_val
 
             label = _label(day_df, i, direction, atr_val)
+
+            # Momentum / candle quality features
+            prev_close_1 = float(close.iloc[i - 1]) if i >= 1 else curr_close
+            prev_close_5 = float(close.iloc[i - 5]) if i >= 5 else curr_close
+            open_0       = float(close.iloc[0])  # first candle close as day anchor
+            ret_1bar     = (curr_close - prev_close_1) / prev_close_1 * 100
+            ret_5bar     = (curr_close - prev_close_5) / prev_close_5 * 100
+            intraday_ret = (curr_close - open_0) / open_0 * 100
+            rsi_slope    = float(rsi.iloc[i]) - float(rsi.iloc[i - 3]) if i >= 3 else 0.0
+            candle_range = float(day_df["high"].iloc[i]) - float(day_df["low"].iloc[i])
+            candle_body  = abs(curr_close - float(day_df["open"].iloc[i]))
+            body_ratio   = candle_body / candle_range if candle_range > 0 else 0.5
 
             rows.append({
                 # Identity
@@ -272,6 +298,7 @@ def _process_day(symbol: str, day_str: str, day_df: pd.DataFrame,
                 "rsi":             round(curr_rsi, 2),
                 "rsi_above_55":    int(curr_rsi > 55),
                 "rsi_below_45":    int(curr_rsi < 45),
+                "rsi_slope":       round(rsi_slope, 2),
                 # EMA features
                 "ema_bull_align":  int(float(ema9.iloc[i]) > float(ema21.iloc[i]) > float(ema50.iloc[i])),
                 "ema_bear_align":  int(float(ema9.iloc[i]) < float(ema21.iloc[i]) < float(ema50.iloc[i])),
@@ -282,6 +309,11 @@ def _process_day(symbol: str, day_str: str, day_df: pd.DataFrame,
                 "n_strategies":    len(strategies),
                 # Regime
                 "regime_trending": int(atr_val >= 0.7 * atr20_val),
+                # Momentum features
+                "ret_1bar":        round(ret_1bar, 3),
+                "ret_5bar":        round(ret_5bar, 3),
+                "intraday_ret":    round(intraday_ret, 3),
+                "body_ratio":      round(body_ratio, 3),
                 # Time features
                 "hour":            int(row_time[:2]),
                 "minute":          int(row_time[3:5]),

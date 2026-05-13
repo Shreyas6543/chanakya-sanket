@@ -17,13 +17,15 @@ class FilterResult:
     reason: str
 
 
-# Statistical patterns from 1,409-signal backtest (May 2025–May 2026)
-_HOUR_WR = {9: 46.0, 10: 55.7, 11: 61.2, 12: 45.9, 13: 37.5, 14: 36.1, 15: 2.4}
+# Statistical patterns from corrected 2-year analysis (May 2024–May 2026)
+# Source: build_ml_dataset.py deduped crossovers, honest WR (no fake OI, no circuit-breaker bias)
+# Break-even WR for 2:1 R:R = 33.3%. Generator already blocks hour>=14 and hour==13+min>=30.
+_HOUR_WR = {9: 36.0, 10: 35.9, 11: 33.0, 12: 33.9, 13: 33.3, 14: 25.7, 15: 11.8}
 _COMBO_WR = {
-    frozenset(["opening_range_breakout", "rsi_momentum"]):                  48.2,
-    frozenset(["opening_range_breakout", "vwap_breakout"]):                 34.6,
-    frozenset(["rsi_momentum", "vwap_breakout"]):                           21.7,
-    frozenset(["opening_range_breakout", "rsi_momentum", "vwap_breakout"]): 33.3,
+    frozenset(["opening_range_breakout", "rsi_momentum"]):                  38.5,  # early-hour bias
+    frozenset(["opening_range_breakout", "vwap_breakout"]):                 34.0,
+    frozenset(["rsi_momentum", "vwap_breakout"]):                           30.0,  # below break-even
+    frozenset(["opening_range_breakout", "rsi_momentum", "vwap_breakout"]): 34.5,
 }
 _BREAKEVEN = 33.3
 
@@ -31,15 +33,16 @@ _PROMPT_TEMPLATE = """You are an intraday options signal evaluator for Indian ma
 
 Statistical patterns from our 1,409-signal backtest (May 2025–May 2026, 5-min candles):
 
-HOURLY WIN RATES (IST):
-- 09:xx → 46% WR | 10:xx → 56% WR | 11:xx → 61% WR (BEST)
-- 12:xx → 46% WR | 13:xx → 38% WR | 14:xx → 36% WR | 15:xx → 2% WR (AVOID)
+HOURLY WIN RATES (IST) — 2yr corrected analysis:
+- 09:xx → 36% WR | 10:xx → 36% WR (BEST early window)
+- 11:xx → 33% WR | 12:xx → 34% WR | 13:xx → 33% WR (break-even)
+- 14:xx → 26% WR (AVOID) | 15:xx → 12% WR (AVOID) — generator blocks these already
 
 STRATEGY COMBO WIN RATES:
-- ORB + RSI → 48% WR (primary, most reliable)
-- ORB + VWAP → 35% WR (weaker)
-- RSI + VWAP → 22% WR (poor)
-- All 3 → 33% WR (adds noise)
+- ORB + RSI → 39% WR (most reliable, prefer early hours)
+- ORB + VWAP → 34% WR (marginal)
+- RSI + VWAP → 30% WR (below break-even — flag as WATCH)
+- All 3 → 35% WR (marginal)
 
 CONTEXT CLUES:
 - RSI > 60 for CALL or < 40 for PUT = momentum aligned (good)
@@ -143,17 +146,15 @@ def _rule_filter(symbol, direction, confidence, signal_context) -> FilterResult:
     reasons = []
     score = confidence
 
-    if hour == 15:
-        return FilterResult(verdict="NO_GO", score=10, reason="15:00 window — 2.4% WR")
-    elif hour == 11:
-        score += 10; reasons.append("11:00 (61% WR)")
+    if hour is not None and hour >= 14:
+        return FilterResult(verdict="NO_GO", score=10, reason=f"{hour}:xx blocked — {hour_wr:.0f}% WR below break-even")
     elif hour == 10:
-        score += 5; reasons.append("10:00 (56% WR)")
-    elif hour in (13, 14):
-        score -= 8; reasons.append(f"{hour}:00 ({hour_wr}% WR, weak)")
+        score += 5; reasons.append("10:xx (36% WR, best window)")
+    elif hour in (13,):
+        score -= 5; reasons.append(f"13:xx (33% WR, break-even)")
 
     if combo_wr is not None:
-        if combo_wr >= 45:
+        if combo_wr >= 37:
             score += 8; reasons.append(f"combo {combo_wr}% WR")
         elif combo_wr < _BREAKEVEN:
             score -= 15; reasons.append(f"combo {combo_wr}% WR (below break-even)")

@@ -142,6 +142,7 @@ async def health():
 
 
 @app.get("/debug/live-prices")
+@app.get("/api/debug/live-prices")
 async def debug_live_prices():
     from app.market_data.websocket_client import LIVE_PRICES
     return {"live_prices": LIVE_PRICES}

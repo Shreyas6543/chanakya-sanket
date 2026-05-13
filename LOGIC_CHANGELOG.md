@@ -179,6 +179,22 @@
 
 ---
 
+### [2026-05-13] Hard signal cutoff at 13:30 IST
+- **What changed**: `generator.py` — blocks signal generation when `hour >= 14 OR (hour == 13 AND minute >= 30)`. Previously only `hour == 15` was blocked.
+- **Why**: 2-year ML analysis (6,864 deduplicated crossovers): 14:xx WR=25.7%, 15:xx WR=11.8% — both below 33.3% break-even. 13:xx WR=33.3% (break-even, marginal). Signal P&L deteriorates sharply after 13:30.
+- **Result**: Eliminates clearly losing time window. Expected WR improvement.
+- **Status**: KEPT — do NOT re-enable 14:xx signals without strong evidence of edge
+
+---
+
+### [2026-05-13] Signal filter stats corrected — removed inflated backtest numbers
+- **What changed**: `signal_filter.py` — `_HOUR_WR` and `_COMBO_WR` updated from old 1,409-signal fake-OI backtest to corrected 2-year analysis (May 2024 – May 2026, honest WR). Old numbers were 10–25pp too high (e.g. 11:xx was 61% WR → corrected to 33%). Old combo ORB+RSI was 48% → corrected to 38.5%.
+- **Why**: Fake OI backtest inflated WR by always agreeing with price direction. Inflated stats caused Claude AI filter to be too permissive.
+- **Result**: AI filter now uses honest baselines. NO_GO threshold adjusted accordingly.
+- **Status**: KEPT
+
+---
+
 ### [2026-05-12] Starlette downgrade to 0.37.2 (infra fix)
 - **What changed**: `starlette` downgraded from 1.0.0 (claude-agent-sdk bumped it) back to 0.37.2 (FastAPI 0.111 requires ~0.37)
 - **Why**: claude-agent-sdk install silently upgraded Starlette, breaking FastAPI's Router init

@@ -32,12 +32,17 @@ OUT_DIR = ML_DIR
 
 FEATURES = [
     "rsi", "rsi_above_55", "rsi_below_45",
+    "rsi_slope",          # RSI momentum (rising vs stalling)
     "vwap_dist_pct",
     "atr_pct",
     "ema_bull_align", "ema_bear_align",
     "strat_rsi", "strat_vwap", "strat_orb",
     "n_strategies",
     "regime_trending",
+    "ret_1bar",           # 1-candle return into signal (momentum quality)
+    "ret_5bar",           # 5-candle return (trend context)
+    "intraday_ret",       # return from day open (trend direction)
+    "body_ratio",         # candle body / range (conviction of signal candle)
     "hour", "minute", "day_of_week", "month",
     "is_banknifty",
     "pcr", "oi_change_pct", "has_oi",
