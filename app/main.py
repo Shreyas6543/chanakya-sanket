@@ -428,8 +428,9 @@ async def api_dashboard(
             except ValueError:
                 return {"error": f"Invalid start_date: {start_date}"}
             q = q.where(
-                sa_text("(signal_context->>'signal_time')::timestamptz >= :start")
-                .bindparams(start=d_start)
+                sa_text(
+                    "COALESCE(NULLIF(signal_context->>'signal_time','')::timestamptz, created_at) >= :start"
+                ).bindparams(start=d_start)
             )
         if end_date:
             try:
@@ -437,8 +438,9 @@ async def api_dashboard(
             except ValueError:
                 return {"error": f"Invalid end_date: {end_date}"}
             q = q.where(
-                sa_text("(signal_context->>'signal_time')::timestamptz <= :end")
-                .bindparams(end=d_end)
+                sa_text(
+                    "COALESCE(NULLIF(signal_context->>'signal_time','')::timestamptz, created_at) <= :end"
+                ).bindparams(end=d_end)
             )
 
         # Strategy filter: only signals where at least one selected strategy fired
