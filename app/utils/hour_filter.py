@@ -1,31 +1,20 @@
 """
-Adaptive hour-based alert filter using rolling win rate.
+Adaptive hour-based shadow filter.
 
-Problem it solves
------------------
-Hard-blocking bad hours creates a dead zone where the system can never learn
-whether the hour has recovered.  This filter suppresses Telegram alerts for
-consistently poor hours while continuing to save every signal to the DB and
-evaluate its outcome.  Because the lifecycle evaluator runs unconditionally,
-the rolling WR updates automatically — a recovering hour will cross the
-re-enable threshold on its own with no manual intervention.
+Signals are ALWAYS generated and saved to DB — no hour is ever blocked.
+This function decides whether a signal should be "shadowed" (no Telegram alert,
+source tagged as 'shadow') based on the rolling win rate for that hour.
 
-Tiers  (computed from last ROLLING_WINDOW live closed signals for the hour)
----------------------------------------------------------------------------
-  ALERT    – Telegram sent normally    (WR >= WARN_BELOW, or < MIN_SAMPLES)
-  WARN     – Telegram sent with ⚠️ tag  (WR in [SUPPRESS_BELOW, WARN_BELOW))
-  SUPPRESS – Telegram skipped          (WR < SUPPRESS_BELOW, sample >= MIN_SAMPLES)
+Rule: WR < SHADOW_THRESHOLD (40%) AND sample >= MIN_SAMPLES → shadow
+      WR >= 40% OR insufficient data                         → normal (send Telegram)
 
-Hysteresis
-----------
-Disable threshold (SUPPRESS_BELOW = 30 %) is intentionally below the
-re-enable threshold (WARN_BELOW = 40 %).  This prevents flip-flopping when
-an hour's WR is sitting right at the edge.
+Using 'shadow' as the source tag (instead of a boolean flag) lets the frontend
+filter and render shadow signals separately while the analytics engine
+naturally excludes them from performance stats.
 
-Only live signals count
------------------------
-Mock and historical signals are excluded so backtests and test triggers
-never pollute the filter's posterior.
+Including 'historical' signals in the rolling WR query means a walk-forward
+backfill bootstraps the filter correctly: no data → never shadows for the first
+few months, then the window fills and bad hours start getting suppressed.
 """
 import structlog
 from sqlalchemy import select
@@ -33,26 +22,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = structlog.get_logger()
 
-# Public tier constants
-ALERT    = "ALERT"
-WARN     = "WARN"
-SUPPRESS = "SUPPRESS"
-
-# Thresholds
-MIN_SAMPLES    = 15    # Never suppress an hour with fewer samples than this
-SUPPRESS_BELOW = 30.0  # WR% — suppress Telegram below this
-WARN_BELOW     = 40.0  # WR% — warn (but still alert) below this
-ROLLING_WINDOW = 20    # Evaluate the most recent N closed signals for the hour
+SHADOW_THRESHOLD = 40.0   # WR% — shadow when rolling WR falls below this
+MIN_SAMPLES      = 15     # Never shadow with fewer samples (insufficient evidence)
+ROLLING_WINDOW   = 20     # Evaluate the most recent N closed signals for this hour
 
 
-async def get_hour_tier(hour: int, session: AsyncSession) -> tuple[str, float | None]:
+async def should_shadow(hour: int, session: AsyncSession) -> tuple[bool, float | None]:
     """
-    Return (tier, rolling_wr_pct) for a trading hour.
+    Return (is_shadow, rolling_wr_pct) for a trading hour.
 
-    rolling_wr_pct is None when sample < MIN_SAMPLES (tier will be ALERT).
+    is_shadow=True  → set signal.source='shadow', skip Telegram
+    is_shadow=False → keep source as-is, send Telegram normally
 
-    The session must be the same async session in use by the caller so we
-    can read already-flushed (but not yet committed) data if needed.
+    rolling_wr_pct is None when sample < MIN_SAMPLES.
     """
     from app.db.models import Signal, SignalState  # local import avoids circular
 
@@ -63,11 +45,9 @@ async def get_hour_tier(hour: int, session: AsyncSession) -> tuple[str, float | 
         SignalState.USER_CLOSED,
     ]
 
-    # Fetch recent closed real signals (live + historical backfill).
-    # Excluding mock/test signals keeps the filter grounded in real market data.
-    # Including "historical" means a walk-forward backfill naturally bootstraps:
-    # no data → ALERT for the first few months, rolling window fills, then
-    # the filter starts suppressing bad hours — same behaviour as going live.
+    # Include both live and historical — excludes mock/test so they never skew the filter.
+    # Walk-forward backfill naturally bootstraps: empty DB → ALERT for first months,
+    # then rolling window fills and bad hours start being shadowed automatically.
     result = await session.execute(
         select(Signal)
         .where(Signal.state.in_(closed_states))
@@ -77,8 +57,10 @@ async def get_hour_tier(hour: int, session: AsyncSession) -> tuple[str, float | 
     )
     recent = result.scalars().all()
 
-    # Filter to this hour in Python — avoids JSONB casting in SQL and is
-    # fast enough given the 300-row cap.
+    # Filter to this hour in Python (avoids JSONB casting complexity in SQL).
+    # Note: shadow signals keep their original_source in signal_context, but their
+    # source column is 'shadow', so they are excluded from this query — correct,
+    # because we want the filter to learn only from signals that were actually traded.
     hour_signals = [
         s for s in recent
         if (s.signal_context or {}).get("hour") == hour
@@ -87,24 +69,18 @@ async def get_hour_tier(hour: int, session: AsyncSession) -> tuple[str, float | 
     n = len(hour_signals)
 
     if n < MIN_SAMPLES:
-        logger.debug("hour_filter: insufficient data — not suppressing", hour=hour, n=n)
-        return (ALERT, None)
+        logger.debug("hour_filter: insufficient data — not shadowing", hour=hour, n=n)
+        return (False, None)
 
     wins = sum(1 for s in hour_signals if s.state == SignalState.TARGET_HIT)
     wr   = round((wins / n) * 100, 1)
-
-    if wr < SUPPRESS_BELOW:
-        tier = SUPPRESS
-    elif wr < WARN_BELOW:
-        tier = WARN
-    else:
-        tier = ALERT
+    is_shadow = wr < SHADOW_THRESHOLD
 
     logger.info(
         "hour_filter evaluated",
         hour=hour,
-        tier=tier,
+        is_shadow=is_shadow,
         rolling_wr=wr,
         sample_size=n,
     )
-    return (tier, wr)
+    return (is_shadow, wr)

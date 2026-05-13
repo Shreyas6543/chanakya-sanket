@@ -472,34 +472,36 @@ async def api_dashboard(
         state = signal.state.value
         result_label = outcome.result if outcome else None
         pnl = round(outcome.pnl, 2) if outcome and outcome.pnl is not None else None
+        is_shadow = signal.source == "shadow"
 
-        total += 1
-        if result_label == "TARGET_HIT":
-            wins += 1
-        elif result_label == "SL_HIT":
-            losses += 1
-        elif state in ("EXPIRED", "USER_CLOSED"):
-            expired += 1
-        if pnl:
-            total_pnl += pnl
+        # Overview stats, by_symbol, by_direction — exclude shadow signals.
+        # Shadow = "would have been generated but hour WR < 40%" — not real trades.
+        if not is_shadow:
+            total += 1
+            if result_label == "TARGET_HIT":
+                wins += 1
+            elif result_label == "SL_HIT":
+                losses += 1
+            elif state in ("EXPIRED", "USER_CLOSED"):
+                expired += 1
+            if pnl:
+                total_pnl += pnl
 
-        # by symbol
-        sym = signal.symbol
-        if sym not in by_symbol:
-            by_symbol[sym] = {"total": 0, "wins": 0, "pnl": 0.0}
-        by_symbol[sym]["total"] += 1
-        if result_label == "TARGET_HIT":
-            by_symbol[sym]["wins"] += 1
-        if pnl:
-            by_symbol[sym]["pnl"] += pnl
+            sym = signal.symbol
+            if sym not in by_symbol:
+                by_symbol[sym] = {"total": 0, "wins": 0, "pnl": 0.0}
+            by_symbol[sym]["total"] += 1
+            if result_label == "TARGET_HIT":
+                by_symbol[sym]["wins"] += 1
+            if pnl:
+                by_symbol[sym]["pnl"] += pnl
 
-        # by direction
-        d = signal.direction.value
-        if d not in by_direction:
-            by_direction[d] = {"total": 0, "wins": 0}
-        by_direction[d]["total"] += 1
-        if result_label == "TARGET_HIT":
-            by_direction[d]["wins"] += 1
+            d = signal.direction.value
+            if d not in by_direction:
+                by_direction[d] = {"total": 0, "wins": 0}
+            by_direction[d]["total"] += 1
+            if result_label == "TARGET_HIT":
+                by_direction[d]["wins"] += 1
 
         ctx = signal.signal_context or {}
         # Use signal_time from context (actual trading date) — created_at is backfill run date
@@ -1027,18 +1029,6 @@ async def _simulate_one_day(
                 break  # Circuit breaker tripped mid-symbol
 
             window = candles_full.iloc[:window_end].copy()
-
-            # Mirror the live 13:30 IST cutoff — generator.py uses now_ist() which
-            # is bypassed by force=True in backfill.  Apply it here against the
-            # candle's actual timestamp so backfill matches live behaviour exactly.
-            from datetime import timezone as _tz, timedelta as _td
-            _IST = _tz(_td(hours=5, minutes=30))
-            _last_ts = window["timestamp"].iloc[-1] if "timestamp" in window.columns else None
-            if _last_ts is not None and hasattr(_last_ts, "astimezone"):
-                _ts_ist = _last_ts.astimezone(_IST)
-                if _ts_ist.hour >= 14 or (_ts_ist.hour == 13 and _ts_ist.minute >= 30):
-                    continue  # Skip — live system would never generate a signal here
-
             spot_price = float(window["close"].iloc[-1])
             _vwap_val = float(_calc_vwap(window).iloc[-1])
             # OI in backfill uses NSE Bhavcopy EOD data (real_oi.py).

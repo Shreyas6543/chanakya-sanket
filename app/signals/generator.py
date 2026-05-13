@@ -56,13 +56,6 @@ async def generate_signal(
     if not force and not can_generate_signals():
         return None
 
-    # Block signals after 13:30 IST — WR drops sharply (14:xx=25.7%, 15:xx=11.8%)
-    # Break-even for 2:1 R:R is 33.3%. Only 10–13:xx is consistently above break-even.
-    from app.utils.market_hours import now_ist
-    _now = now_ist()
-    if not force and (_now.hour >= 14 or (_now.hour == 13 and _now.minute >= 30)):
-        return None
-
     regime = detect_regime(candles)
     is_sideways = regime == "SIDEWAYS"
 
@@ -223,26 +216,24 @@ async def generate_signal(
     )
 
     # ── Hour filter ───────────────────────────────────────────────────────────
-    # Applied to both live and historical signals so that a walk-forward backfill
-    # simulates exactly how the live system would have behaved: the first ~N months
-    # have no history → ALERT (pass-through), then the rolling window fills and the
-    # filter starts suppressing bad hours automatically.
-    # Mock/test signals are excluded (source="mock") — they must never skew the filter.
-    # The signal is ALWAYS saved to DB and evaluated — suppression only controls
-    # whether a Telegram alert fires.
+    # Signals are ALWAYS generated and saved to DB — no hour is hard-blocked.
+    # If the rolling WR for this hour is < 40% (with enough samples), the signal
+    # is tagged source='shadow': saved + evaluated but Telegram is skipped.
+    # Mock/test signals are never shadowed — they must never pollute the filter.
+    # Walk-forward backfill bootstraps naturally: empty DB → never shadows for the
+    # first ~4 months, then bad hours get shadowed as the rolling window fills.
     if source in ("live", "historical") and _hour is not None:
-        from app.utils.hour_filter import get_hour_tier
-        _tier, _rolling_wr = await get_hour_tier(_hour, session)
-        signal_context["hour_filter_tier"]       = _tier
-        if _rolling_wr is not None:
-            signal_context["hour_filter_rolling_wr"] = _rolling_wr
-        signal.signal_context  = signal_context   # update with tier info
-        signal.alert_suppressed = (_tier == "SUPPRESS")
-        if signal.alert_suppressed:
+        from app.utils.hour_filter import should_shadow
+        _is_shadow, _rolling_wr = await should_shadow(_hour, session)
+        signal_context["hour_filter_rolling_wr"]    = _rolling_wr
+        signal_context["hour_filter_original_source"] = source  # track origin
+        signal.signal_context = signal_context
+        if _is_shadow:
+            signal.source = "shadow"
             logger.info(
-                "Signal Telegram suppressed by hour filter",
+                "Signal shadowed by hour filter",
                 symbol=symbol, hour=_hour,
-                tier=_tier, rolling_wr=_rolling_wr,
+                rolling_wr=_rolling_wr,
             )
 
     session.add(signal)

@@ -72,9 +72,10 @@ function SourceBadge({ source }: { source: Source }) {
     live:       'bg-emerald-900 text-emerald-300',
     historical: 'bg-gray-700 text-gray-400',
     mock:       'bg-orange-900 text-orange-300',
+    shadow:     'bg-purple-900 text-purple-300',
   }
   return (
-    <span className={`px-1.5 py-0.5 rounded text-xs ${style[source]}`}>{source}</span>
+    <span className={`px-1.5 py-0.5 rounded text-xs ${style[source] ?? 'bg-gray-700 text-gray-400'}`}>{source}</span>
   )
 }
 
@@ -181,7 +182,11 @@ export default function DashboardPage() {
     </th>
   )
 
-  // Client-side by_hour + by_combo (respect filters)
+  // Shadow signals are excluded from trade analytics but included in the hour WR chart
+  // (so you can see the true WR of every hour, including ones currently being shadowed).
+  const nonShadow = useMemo(() => signals.filter(s => s.source !== 'shadow'), [signals])
+
+  // by_hour: uses ALL signals (historical + live + shadow) — this is the hour WR truth table
   const byHour = useMemo((): ByHour[] => {
     const map = new Map<number, { wins: number; total: number }>()
     for (const s of signals) {
@@ -196,9 +201,10 @@ export default function DashboardPage() {
       .sort((a, b) => a.hour - b.hour)
   }, [signals])
 
+  // by_combo: excludes shadow — only counts signals that were actually tradeable
   const byCombo = useMemo((): ByCombo[] => {
     const map = new Map<string, { wins: number; total: number }>()
-    for (const s of signals) {
+    for (const s of nonShadow) {
       if (!s.strategies_fired?.length) continue
       const key = [...s.strategies_fired].sort().join('+')
       const r = map.get(key) ?? { wins: 0, total: 0 }
@@ -210,7 +216,7 @@ export default function DashboardPage() {
       .map(([combo, r]) => ({ combo, ...r, win_rate: Math.round(r.wins / r.total * 100) }))
       .filter(r => r.total >= 3)
       .sort((a, b) => b.total - a.total)
-  }, [signals])
+  }, [nonShadow])
 
   const ov = data?.overview
 
@@ -310,8 +316,8 @@ export default function DashboardPage() {
       {/* Equity Curve + Monthly Breakdown */}
       {data && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-          <EquityCurve signals={signals} />
-          <MonthlyBreakdown signals={signals} />
+          <EquityCurve signals={nonShadow} />
+          <MonthlyBreakdown signals={nonShadow} />
         </div>
       )}
 
@@ -422,6 +428,7 @@ export default function DashboardPage() {
                 <option value="ALL">All sources</option>
                 <option value="live">Live only</option>
                 <option value="historical">Historical</option>
+                <option value="shadow">Shadow only</option>
                 <option value="mock">Mock</option>
               </select>
               <select value={symbolFilter} onChange={e => setSymbolFilter(e.target.value as SymbolFilter)}

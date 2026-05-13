@@ -3,7 +3,7 @@
 export type SignalState = 'OPEN' | 'TARGET_HIT' | 'SL_HIT' | 'EXPIRED' | 'USER_CLOSED'
 export type Direction   = 'CALL' | 'PUT'
 export type Regime      = 'TRENDING' | 'SIDEWAYS'
-export type Source      = 'live' | 'historical' | 'mock'
+export type Source      = 'live' | 'historical' | 'mock' | 'shadow'
 
 // ── Per-signal row returned by /api/dashboard ────────────────────────────────
 
