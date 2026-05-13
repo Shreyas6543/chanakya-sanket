@@ -1,4 +1,4 @@
-.PHONY: help dev infra stop logs status trigger debug analytics report simulate backfill ui
+.PHONY: help dev infra stop logs status trigger debug analytics report simulate backfill backfill-full ui
 
 PYTHON := .venv/bin/python3
 UVICORN := .venv/bin/uvicorn
@@ -75,3 +75,17 @@ backfill:
 
 ui:
 	cd frontend && npm run dev
+
+# Walk-forward backfill — 2-year clean run with adaptive hour filter
+# 1. Clears all historical + mock signals (live signals untouched)
+# 2. Backfills from oldest OHLCV data (2024-05-13) to today
+# 3. Hour filter self-bootstraps: no-op for first ~4 months, then kicks in
+# Server must be running: make dev
+backfill-full:
+	@echo "Step 1/2 — Clearing all historical + mock signals (live signals safe)..."
+	@curl -s -X POST "$(API)/admin/clear-historical" | $(PYTHON) -m json.tool
+	@echo ""
+	@echo "Step 2/2 — Starting walk-forward backfill (2024-05-13 → today, ~500 trading days)..."
+	@echo "This will take 20-40 minutes. Go get a coffee."
+	@curl -s -X POST "$(API)/trigger/backfill?start_date=2024-05-13&signals_per_day=10" \
+		--max-time 3600 | $(PYTHON) -m json.tool

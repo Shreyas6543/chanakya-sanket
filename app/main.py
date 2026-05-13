@@ -778,6 +778,38 @@ async def admin_oi_disable():
     return {"oi_strategy_enabled": False, "message": "OI strategy disabled. Price action only (VWAP + RSI + ORB)."}
 
 
+@app.post("/admin/clear-historical")
+async def admin_clear_historical():
+    """
+    Delete all historical and mock signals (plus their outcomes and strategy results).
+    Live signals are never touched.
+    Used before a walk-forward backfill to start from a clean slate.
+    """
+    from sqlalchemy import text as sa_text
+    async with AsyncSessionLocal() as session:
+        # Delete child rows first (FK constraints)
+        r1 = await session.execute(sa_text(
+            "DELETE FROM signal_outcomes "
+            "WHERE signal_id IN (SELECT id FROM signals WHERE source IN ('historical','mock'))"
+        ))
+        r2 = await session.execute(sa_text(
+            "DELETE FROM strategy_results "
+            "WHERE signal_id IN (SELECT id FROM signals WHERE source IN ('historical','mock'))"
+        ))
+        r3 = await session.execute(sa_text(
+            "DELETE FROM signals WHERE source IN ('historical','mock')"
+        ))
+        await session.commit()
+
+    return {
+        "status": "cleared",
+        "outcomes_deleted":         r1.rowcount,
+        "strategy_results_deleted": r2.rowcount,
+        "signals_deleted":          r3.rowcount,
+        "note": "Live signals untouched. Ready for walk-forward backfill.",
+    }
+
+
 # ── Manual Triggers (for testing) ─────────────────────────────────────────────
 
 @app.post("/trigger/signal-engine")
@@ -1193,17 +1225,12 @@ async def trigger_backfill(
     win_rate = round(total_wins / resolved * 100, 1) if resolved > 0 else None
 
     # Send one Telegram summary
-    summary_lines = "\n".join(
-        f"  {r['date']}: {r['signals']} signals  ✅{r['wins']} ❌{r['losses']} ⏳{r['expired']}"
-        for r in day_results
-    )
+    range_label = f"{range_start} → {range_end}"
     await send_text_alert(
-        f"📊 *Backfill Complete — {weeks} weeks*\n\n"
-        f"📅 Trading days processed: {len(all_dates)}\n"
-        f"🔖 Total signals: {total_signals}\n"
-        f"✅ Target hit: {total_wins}\n"
-        f"❌ SL hit: {total_losses}\n"
-        f"⏳ Expired: {total_expired}\n"
+        f"📊 *Backfill Complete*\n"
+        f"📅 {range_label}\n\n"
+        f"Trading days: {len(all_dates)}  |  Signals: {total_signals}\n"
+        f"✅ {total_wins}  ❌ {total_losses}  ⏳ {total_expired}\n"
         f"🎯 Win rate: *{win_rate}%*\n\n"
         f"_Run `make analytics` for full breakdown_"
     )

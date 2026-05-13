@@ -223,11 +223,14 @@ async def generate_signal(
     )
 
     # ── Hour filter ───────────────────────────────────────────────────────────
-    # Only applied to live signals.  Mock/historical signals always get alerts.
-    # The signal is ALWAYS saved to DB and evaluated — suppression only affects
-    # whether a Telegram alert is dispatched.  This keeps the rolling WR updated
-    # even for "bad" hours so the filter self-corrects as the market changes.
-    if source == "live" and not force and _hour is not None:
+    # Applied to both live and historical signals so that a walk-forward backfill
+    # simulates exactly how the live system would have behaved: the first ~N months
+    # have no history → ALERT (pass-through), then the rolling window fills and the
+    # filter starts suppressing bad hours automatically.
+    # Mock/test signals are excluded (source="mock") — they must never skew the filter.
+    # The signal is ALWAYS saved to DB and evaluated — suppression only controls
+    # whether a Telegram alert fires.
+    if source in ("live", "historical") and _hour is not None:
         from app.utils.hour_filter import get_hour_tier
         _tier, _rolling_wr = await get_hour_tier(_hour, session)
         signal_context["hour_filter_tier"]       = _tier

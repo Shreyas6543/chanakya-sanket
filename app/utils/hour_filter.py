@@ -63,12 +63,15 @@ async def get_hour_tier(hour: int, session: AsyncSession) -> tuple[str, float | 
         SignalState.USER_CLOSED,
     ]
 
-    # Fetch recent closed live signals.  300 gives ample headroom to find
-    # ROLLING_WINDOW examples for any individual hour across a few months.
+    # Fetch recent closed real signals (live + historical backfill).
+    # Excluding mock/test signals keeps the filter grounded in real market data.
+    # Including "historical" means a walk-forward backfill naturally bootstraps:
+    # no data → ALERT for the first few months, rolling window fills, then
+    # the filter starts suppressing bad hours — same behaviour as going live.
     result = await session.execute(
         select(Signal)
         .where(Signal.state.in_(closed_states))
-        .where(Signal.source == "live")
+        .where(Signal.source.in_(["live", "historical"]))
         .order_by(Signal.created_at.desc())
         .limit(300)
     )
