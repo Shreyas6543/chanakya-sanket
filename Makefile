@@ -1,4 +1,4 @@
-.PHONY: help dev infra stop logs status trigger debug analytics report simulate backfill backfill-full ui
+.PHONY: help dev infra stop logs status trigger debug analytics report simulate backfill backfill-full backfill-progress ui
 
 PYTHON := .venv/bin/python3
 UVICORN := .venv/bin/uvicorn
@@ -75,6 +75,19 @@ backfill:
 
 ui:
 	cd frontend && npm run dev
+
+# Check backfill progress (run in a separate terminal while backfill-full is running)
+backfill-progress:
+	@docker exec trading_postgres psql -U trading -d trading_engine -c \
+		"SELECT source, COUNT(*) AS signals, \
+		        SUM(CASE WHEN state='TARGET_HIT' THEN 1 ELSE 0 END) AS wins, \
+		        SUM(CASE WHEN state='SL_HIT'     THEN 1 ELSE 0 END) AS losses, \
+		        SUM(CASE WHEN state='EXPIRED'    THEN 1 ELSE 0 END) AS expired, \
+		        MIN(signal_context->>'signal_time') AS oldest, \
+		        MAX(signal_context->>'signal_time') AS newest \
+		 FROM signals \
+		 GROUP BY source \
+		 ORDER BY source;"
 
 # Walk-forward backfill — 2-year clean run with adaptive hour filter
 # 1. Clears all historical + mock signals (live signals untouched)
